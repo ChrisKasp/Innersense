@@ -1,0 +1,39 @@
+# Secrets
+.env
+.env.*
+server_credentials.conf
+mariadb_migration/server_credentials.conf
+mariadb_migration/*.csv
+*.pem
+*.key
+
+# IDE
+.IS_Code/
+.idea/
+
+# Dependencies
+vendor/
+
+# Runtime
+public/var/
+public/assets/uploads/
+
+# Backups
+*_backup_*/
+php_backup_*/
+public/backups/*.sql
+public/backups/*.sql.gz
+DB-dumps/
+DB-Dumbs/
+
+# OS
+.DS_Store
+Thumbs.db
+thumbs.db
+public/Bilder/Thumbs.db
+
+# VS Code local tooling (optional)
+IS_Code_vendor/
+
+# Logs
+*.log

@@ -1,0 +1,161 @@
+:root {
+    --bg: #f4f1ea;
+    --surface: #ffffff;
+    --text: #1f1d1a;
+    --accent: #0f766e;
+    --accent-2: #115e59;
+    --danger: #b91c1c;
+    --border: #d8d2c3;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Source Sans 3", "Trebuchet MS", sans-serif;
+    color: var(--text);
+    background: radial-gradient(circle at top left, #fff8ea 0%, #f0ede5 60%, #ece6d8 100%);
+}
+
+.container {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 2rem 1rem 3rem;
+}
+
+.container.narrow {
+    max-width: 720px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+h1 {
+    margin: 0;
+    font-size: clamp(1.5rem, 2vw + 1rem, 2.25rem);
+}
+
+.button,
+button,
+a.button {
+    display: inline-block;
+    text-decoration: none;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.55rem 0.9rem;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.button:hover,
+button:hover,
+a.button:hover {
+    background: var(--accent-2);
+}
+
+.search {
+    display: flex;
+    gap: 0.6rem;
+    margin: 1rem 0;
+}
+
+input[type="text"],
+input[type="email"] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    background: #fff;
+}
+
+.notice,
+.error {
+    border-radius: 0.45rem;
+    padding: 0.6rem 0.75rem;
+}
+
+.notice {
+    background: #dcfce7;
+    border: 1px solid #86efac;
+}
+
+.error {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: var(--danger);
+}
+
+.table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    overflow: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.actions form {
+    margin: 0;
+}
+
+.actions a {
+    text-decoration: none;
+    color: var(--accent-2);
+}
+
+.form-grid {
+    display: grid;
+    gap: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1rem;
+}
+
+.form-grid label {
+    display: grid;
+    gap: 0.25rem;
+    font-weight: 600;
+}
+
+@media (max-width: 760px) {
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .search {
+        flex-direction: column;
+    }
+
+    th,
+    td {
+        font-size: 0.95rem;
+    }
+}

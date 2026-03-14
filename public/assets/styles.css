@@ -1,0 +1,258 @@
+:root {
+    --bg: #010a1d;
+    --bg-soft: #04142d;
+    --card: #081b38;
+    --text: #f5f8ff;
+    --muted: #c6d0e4;
+    --line: #143156;
+    --glow: #26a3ff;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+}
+
+body {
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    color: var(--text);
+    background: linear-gradient(145deg, #010611, #020f27 48%, #02122c);
+}
+
+.site-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+        radial-gradient(circle at 12% 20%, rgba(16, 112, 218, 0.22), transparent 38%),
+        radial-gradient(circle at 82% 12%, rgba(55, 184, 146, 0.18), transparent 35%),
+        linear-gradient(180deg, #000a1f 0%, #031639 62%, #010c20 100%);
+}
+
+.top-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.9rem 1.2rem;
+    border-bottom: 1px solid var(--line);
+    background: rgba(6, 14, 32, 0.82);
+    backdrop-filter: blur(10px);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.brand {
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 1px solid #1d486f;
+    display: grid;
+    place-items: center;
+    text-decoration: none;
+    color: var(--text);
+    background: linear-gradient(160deg, #05264f, #081025);
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+
+.top-nav nav {
+    display: flex;
+    align-items: center;
+    gap: 1.35rem;
+}
+
+.top-nav nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.92rem;
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid transparent;
+    padding-bottom: 0.25rem;
+}
+
+.top-nav nav a.active,
+.top-nav nav a:hover {
+    color: #ffffff;
+    border-bottom-color: #7bc7ff;
+}
+
+.page-wrap {
+    width: min(1120px, 94%);
+    margin: 0 auto;
+    padding: 3rem 0 4rem;
+}
+
+.hero {
+    max-width: 760px;
+    margin-bottom: 2rem;
+    animation: rise 600ms ease-out both;
+}
+
+.hero h1 {
+    margin: 0;
+    font-family: "Space Grotesk", sans-serif;
+    font-size: clamp(2rem, 4.1vw, 3.2rem);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+}
+
+.hero p {
+    margin-top: 1rem;
+    color: var(--muted);
+    line-height: 1.75;
+    max-width: 72ch;
+}
+
+.card-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.price-card {
+    background: linear-gradient(180deg, rgba(9, 28, 55, 0.92), rgba(4, 16, 37, 0.92));
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    overflow: hidden;
+    padding: 0 0 1rem;
+    box-shadow: 0 12px 22px rgba(0, 0, 0, 0.25);
+    animation: rise 650ms ease-out both;
+}
+
+.price-card:nth-child(2) { animation-delay: 80ms; }
+.price-card:nth-child(3) { animation-delay: 140ms; }
+.price-card:nth-child(4) { animation-delay: 220ms; }
+.price-card:nth-child(5) { animation-delay: 290ms; }
+
+.price-card img {
+    width: 100%;
+    height: 190px;
+    object-fit: cover;
+    display: block;
+    filter: saturate(0.7) contrast(1.08);
+}
+
+.price-card h2 {
+    margin: 1rem 1rem 0.65rem;
+    font-size: 1.6rem;
+    line-height: 1.08;
+    font-family: "Space Grotesk", sans-serif;
+}
+
+.price-card p {
+    margin: 0 1rem 0.8rem;
+    color: var(--muted);
+    line-height: 1.45;
+    min-height: 3.6em;
+}
+
+.price-card ul {
+    margin: 0;
+    padding: 0 1rem;
+    list-style: none;
+    color: #ecf3ff;
+    line-height: 1.5;
+}
+
+.price-card li {
+    margin-bottom: 0.25rem;
+    padding-left: 1rem;
+    position: relative;
+}
+
+.price-card li::before {
+    content: "";
+    width: 0.38rem;
+    height: 0.38rem;
+    border-radius: 50%;
+    background: var(--glow);
+    box-shadow: 0 0 8px rgba(70, 185, 255, 0.8);
+    position: absolute;
+    left: 0;
+    top: 0.62rem;
+}
+
+.contact-bar {
+    margin-top: 2.4rem;
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    background: linear-gradient(110deg, rgba(15, 46, 88, 0.78), rgba(5, 22, 46, 0.82));
+    padding: 1rem 1.2rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+}
+
+.contact-bar p {
+    margin: 0;
+    color: #dce8ff;
+}
+
+.contact-bar a {
+    color: #c8f1ff;
+    text-decoration: none;
+    border: 1px solid #2f6da1;
+    border-radius: 0.55rem;
+    padding: 0.55rem 0.75rem;
+    white-space: nowrap;
+}
+
+.contact-bar a:hover {
+    border-color: #52b1ff;
+}
+
+@keyframes rise {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 1100px) {
+    .card-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 800px) {
+    .top-nav {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .card-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .contact-bar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 560px) {
+    .top-nav nav {
+        gap: 0.8rem;
+        flex-wrap: wrap;
+    }
+
+    .card-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .price-card img {
+        height: 220px;
+    }
+}
