@@ -21,7 +21,7 @@ function db(): PDO
     $port = getenv('DB_PORT') ?: '3306';
     $name = getenv('DB_NAME') ?: 'innersense';
     $user = getenv('DB_USER') ?: 'innersense_user';
-    $pass = getenv('DB_PASS') ?: 'innersense_pass';
+    $pass = getenv('DB_PASS') ?: (getenv('DB_PASSWORD') ?: 'innersense_pass');
 
     $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $host, $port, $name);
 

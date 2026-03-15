@@ -11,7 +11,7 @@ $status = (string) ($_GET['status'] ?? '');
 $statusMessages = [
     'created' => 'Kunde wurde angelegt.',
     'updated' => 'Kunde wurde aktualisiert.',
-    'deleted' => 'Kunde wurde geloescht.',
+    'deleted' => 'Kunde wurde gelöscht.',
 ];
 
 $message = $statusMessages[$status] ?? '';
@@ -25,6 +25,11 @@ $message = $statusMessages[$status] ?? '';
     <link rel="stylesheet" href="assets/admin.css">
 </head>
 <body>
+<?php
+$activePage = '';
+require __DIR__ . '/partials/site_header.php';
+?>
+
 <main class="container">
     <header class="header">
         <h1>Innersense Kundenverwaltung</h1>
@@ -66,9 +71,9 @@ $message = $statusMessages[$status] ?? '';
                         <td><?= e((string) $customer['company']) ?></td>
                         <td class="actions">
                             <a href="customer_edit.php?id=<?= (int) $customer['id'] ?>">Bearbeiten</a>
-                            <form method="post" action="customer_delete.php" onsubmit="return confirm('Kunde wirklich loeschen?');">
+                            <form method="post" action="customer_delete.php" onsubmit="return confirm('Kunde wirklich löschen?');">
                                 <input type="hidden" name="id" value="<?= (int) $customer['id'] ?>">
-                                <button type="submit">Loeschen</button>
+                                <button type="submit">Löschen</button>
                             </form>
                         </td>
                     </tr>
@@ -77,5 +82,6 @@ $message = $statusMessages[$status] ?? '';
         </table>
     </section>
 </main>
+<?php require __DIR__ . '/partials/site_footer.php'; ?>
 </body>
 </html>

@@ -16,7 +16,7 @@ CREDENTIALS_FILE = REPO_ROOT / 'mariadb_migration' / 'server_credentials.conf'
 # Welche Dateitypen sollen standardmäßig hochgeladen werden?
 ALLOWED_EXTENSIONS = {
     '.php', '.html', '.htm', '.css', '.js', '.json',
-    '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
+    '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.avif',
 }
 
 # Verzeichnisse/Dateien, die beim Upload ignoriert werden sollen
@@ -38,7 +38,7 @@ EXCLUDE_FILENAMES = {
     'deploy_changed_files.py',
 }
 
-BINARY_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.pdf', '.zip', '.gz', '.bz2', '.tar', '.tgz', '.webp', '.svg'}
+BINARY_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.pdf', '.zip', '.gz', '.bz2', '.tar', '.tgz', '.webp', '.svg', '.avif'}
 
 
 def load_credentials() -> dict:
@@ -201,6 +201,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--allow-any', action='store_true',
                         help='Upload explicit files even if normally excluded.')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be uploaded without transferring.')
+    parser.add_argument('--sync-bilder', action='store_true',
+                        help='Sync public/assets/Bilder (upload all local files and delete stale remote files).')
     return parser.parse_args()
 
 
@@ -218,8 +220,113 @@ def list_src_files() -> List[Path]:
     return [p.relative_to(REPO_ROOT) for p in src_dir.rglob('*') if p.is_file()]
 
 
+def find_bilder_dir() -> Path | None:
+    candidates = [
+        REPO_ROOT / 'public' / 'assets' / 'Bilder',
+        REPO_ROOT / 'public' / 'assets' / 'bilder',
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return None
+
+
+def sync_bilder_folder(ftp: FTP, resolved_base: str, dry_run: bool) -> None:
+    bilder_dir = find_bilder_dir()
+    if bilder_dir is None:
+        print('Kein Bilder-Ordner gefunden (erwartet: public/assets/Bilder oder public/assets/bilder).')
+        return
+
+    local_files = sorted([p for p in bilder_dir.iterdir() if p.is_file()])
+    if not local_files:
+        print(f'Keine lokalen Dateien in {bilder_dir.relative_to(REPO_ROOT).as_posix()} gefunden.')
+        return
+
+    local_rel_files = [p.relative_to(REPO_ROOT) for p in local_files]
+    local_names = [p.name for p in local_files]
+    remote_dir = resolved_base.rstrip('/') + '/' + bilder_dir.relative_to(REPO_ROOT).as_posix()
+
+    print('Bilder-Sync Dateien (lokal):')
+    for rel in local_rel_files:
+        print(f'  - {rel.as_posix()}')
+    print()
+
+    if dry_run:
+        print(f"[DRY] Würde Ordner synchronisieren: {bilder_dir.relative_to(REPO_ROOT).as_posix()} -> {remote_dir}")
+        return
+
+    remote_abs = ensure_remote_base(ftp, remote_dir)
+    ftp.cwd(remote_abs)
+
+    remote_names: List[str] = []
+    for item in ftp.nlst():
+        name = PurePosixPath(item).name
+        if name in {'.', '..'}:
+            continue
+        remote_names.append(name)
+
+    print(f'Upload zu {remote_abs}:')
+    for rel_file in local_rel_files:
+        upload_file(ftp, resolved_base, rel_file, dry_run=False)
+
+    stale = sorted(set(remote_names) - set(local_names))
+    if stale:
+        ftp.cwd(remote_abs)
+        print('Lösche alte Dateien auf dem Server:')
+        for name in stale:
+            deleted = False
+            last_error: Exception | None = None
+            delete_candidates = [name, remote_abs.rstrip('/') + '/' + name]
+            for candidate in delete_candidates:
+                try:
+                    ftp.delete(candidate)
+                    print(f'  - {name}')
+                    deleted = True
+                    break
+                except error_perm as exc:
+                    last_error = exc
+            if not deleted:
+                print(f'  ! Konnte nicht löschen: {name} ({last_error})')
+    else:
+        print('Keine alten Dateien zum Löschen gefunden.')
+
+
 def main() -> None:
     args = parse_args()
+
+    if args.sync_bilder:
+        config = load_credentials()
+        host = config.get('SERVER_HOST', '')
+        user = config.get('SERVER_USER', '')
+        password = config.get('SERVER_PASSWORD', '')
+
+        configured = config.get('SERVER_PATH') or config.get('DOCUMENT_ROOT') or '/'
+        if configured.startswith('/www/htdocs/'):
+            base_dir = '/'
+        else:
+            base_dir = configured or '/'
+
+        if not all([host, user, password]):
+            raise RuntimeError('SERVER_HOST/USER/PASSWORD müssen in server_credentials.conf gesetzt sein.')
+
+        if args.dry_run:
+            ftp = None
+            resolved_base = base_dir or '/'
+            print(f"[DRY] Würde zu FTP {host} verbinden und den Bilder-Ordner synchronisieren.")
+            sync_bilder_folder(ftp, resolved_base, dry_run=True)
+            return
+
+        ftp = FTP(host)
+        ftp.login(user, password)
+        print(f"Verbunden mit {host} als {user}")
+        try:
+            resolved_base = ensure_remote_base(ftp, base_dir)
+            print(f"Remote-Basis: {resolved_base}")
+            sync_bilder_folder(ftp, resolved_base, dry_run=False)
+        finally:
+            ftp.quit()
+        return
+
     if args.files:
         files = [Path(f) for f in args.files]
     elif args.all:

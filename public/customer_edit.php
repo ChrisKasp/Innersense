@@ -56,9 +56,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="assets/admin.css">
 </head>
 <body>
+<?php
+$activePage = '';
+require __DIR__ . '/partials/site_header.php';
+?>
+
 <main class="container narrow">
     <h1>Kunde bearbeiten</h1>
-    <p><a href="customers.php">Zurueck zur Uebersicht</a></p>
+    <p><a href="customers.php">Zurück zur Übersicht</a></p>
 
     <?php foreach ($errors as $error): ?>
         <p class="error"><?= e($error) ?></p>
@@ -74,5 +79,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <button type="submit">Aenderungen speichern</button>
     </form>
 </main>
+<?php require __DIR__ . '/partials/site_footer.php'; ?>
 </body>
 </html>

@@ -1,0 +1,12 @@
+-- Migration: add street address to customer
+-- Date: 2026-03-15
+
+ALTER TABLE customer
+    ADD COLUMN IF NOT EXISTS street_address VARCHAR(190) NOT NULL DEFAULT '' AFTER phone;
+
+-- Optional check
+SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'customer'
+  AND COLUMN_NAME = 'street_address';

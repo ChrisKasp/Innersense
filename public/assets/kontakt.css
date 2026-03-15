@@ -1,0 +1,394 @@
+:root {
+    --paper: #e9e9e9;
+    --ink: #111827;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding-top: 78px;
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+}
+
+.topbar {
+    background: #ececec;
+    min-height: 78px;
+    padding: 0 1.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1000;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.brand img {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+}
+
+.main-nav {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 2.7rem;
+}
+
+.main-nav a {
+    color: #262b35;
+    text-decoration: none;
+    font-size: 1.3rem;
+    line-height: 1;
+}
+
+.main-nav a.active {
+    padding-bottom: 0.25rem;
+    border-bottom: 2px solid #2b2f3a;
+}
+
+.social-links {
+    margin-left: 2.8rem;
+    display: flex;
+    align-items: center;
+    gap: 1.8rem;
+}
+
+.social-links a {
+    color: #111827;
+    text-decoration: none;
+    font-family: "Sora", sans-serif;
+    font-size: 1.45rem;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.social-links a img {
+    width: 1.02rem;
+    height: 1.02rem;
+    display: block;
+    object-fit: contain;
+}
+
+.container {
+    width: min(1320px, 94%);
+    margin: 0 auto;
+}
+
+.contact-intro {
+    padding: 2rem 0 1.2rem;
+}
+
+.contact-intro h1 {
+    margin: 0 0 1.7rem;
+    text-align: center;
+    font-family: "Sora", sans-serif;
+    font-weight: 700;
+    font-size: 2.25rem;
+    letter-spacing: -0.01em;
+}
+
+.quote-image {
+    display: block;
+    width: min(690px, 100%);
+    height: auto;
+    margin: 0 auto 2.2rem;
+}
+
+.intro-copy {
+    width: min(1120px, 100%);
+    margin: 0 auto;
+}
+
+.intro-copy p {
+    margin: 0 0 0.65rem;
+    font-size: 1.125rem;
+    line-height: 1.5;
+    color: #31353d;
+}
+
+.intro-copy p.lead {
+    margin-top: 1.2rem;
+}
+
+.contact-actions {
+    margin-top: 2.4rem;
+    display: flex;
+    justify-content: center;
+    gap: 1.4rem;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.88rem 2.15rem;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 1.08rem;
+}
+
+.btn-primary {
+    background: #050f25;
+    color: #fff;
+    border: 1px solid #050f25;
+}
+
+.btn-secondary {
+    color: #343940;
+    background: transparent;
+    border: 1px solid #4f545e;
+}
+
+.contact-form-section {
+    padding: 1.6rem 0 3rem;
+}
+
+.contact-form-section .container {
+    width: min(1120px, 94%);
+}
+
+.contact-form-section h2 {
+    margin: 0 0 1.7rem;
+    text-align: center;
+    font-family: "Sora", sans-serif;
+    font-size: 2.25rem;
+}
+
+.contact-form {
+    font-size: 1rem;
+}
+
+.form-notice,
+.form-error {
+    border-radius: 5px;
+    padding: 0.65rem 0.85rem;
+    margin: 0 0 1rem;
+    font-size: 0.98rem;
+}
+
+.form-notice {
+    background: #dcfce7;
+    border: 1px solid #86efac;
+    color: #14532d;
+}
+
+.form-error {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.field-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.term-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: end;
+}
+
+.contact-form label {
+    display: grid;
+    gap: 0.45rem;
+    color: #3b4048;
+    font-size: 1rem;
+    line-height: 1.35;
+}
+
+.contact-form input,
+.contact-form select,
+.contact-form textarea {
+    width: 100%;
+    border: 1px solid #b8bcc5;
+    border-radius: 5px;
+    background: transparent;
+    font: inherit;
+    color: #1f2937;
+    line-height: 1.35;
+}
+
+.contact-form input {
+    min-height: 48px;
+    padding: 0.72rem 0.92rem;
+}
+
+.contact-form select {
+    min-height: 48px;
+    padding: 0.72rem 0.92rem;
+}
+
+.appointment-picker {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.2fr) minmax(0, 0.85fr);
+    gap: 0.6rem;
+}
+
+.appointment-picker select {
+    min-width: 0;
+}
+
+.field-block {
+    margin-top: 1.1rem;
+}
+
+.contact-form textarea {
+    min-height: 120px;
+    resize: vertical;
+    padding: 0.72rem 0.92rem;
+}
+
+.contact-form input:focus,
+.contact-form select:focus,
+.contact-form textarea:focus {
+    outline: none;
+    border-color: #6ea8ff;
+    box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.45);
+}
+
+.consent-row {
+    margin-top: 1.5rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.85rem;
+    align-items: start;
+}
+
+.consent-row input {
+    width: 19px;
+    height: 19px;
+    margin-top: 0.35rem;
+}
+
+.privacy-note {
+    margin: 1rem 0 1.2rem 1.95rem;
+    color: #3b4048;
+    font-size: 1rem;
+}
+
+.privacy-note a {
+    color: inherit;
+}
+
+.submit-btn {
+    display: block;
+    margin: 0 auto;
+    min-width: 0;
+    border: 0;
+    border-radius: 5px;
+    background: #a3a7ad;
+    color: #f6f6f6;
+    padding: 0.88rem 2.15rem;
+    font-size: 1.08rem;
+    cursor: pointer;
+}
+
+.page-footer {
+    background: #ececec;
+    padding: 3.5rem 0 4.2rem;
+}
+
+.footer-inner {
+    max-width: 1240px;
+}
+
+.footer-social {
+    display: flex;
+    gap: 1.25rem;
+    margin-bottom: 2.9rem;
+}
+
+.footer-social a {
+    width: 1.35rem;
+    height: 1.35rem;
+    text-decoration: none;
+    color: #0f1725;
+    border: 1px solid #0f1725;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: "Sora", sans-serif;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+}
+
+.footer-social a img {
+    width: 0.8rem;
+    height: 0.8rem;
+    display: block;
+    object-fit: contain;
+}
+
+.footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+}
+
+.footer-links a {
+    color: #2d2d2d;
+    font-size: 1rem;
+    text-decoration: underline;
+}
+
+@media (max-width: 1080px) {
+    body {
+        padding-top: 64px;
+    }
+
+    .topbar {
+        min-height: 64px;
+        padding: 0 0.9rem;
+        gap: 0.6rem;
+    }
+
+    .main-nav {
+        margin-left: auto;
+        gap: 0.85rem;
+    }
+
+    .main-nav a {
+        font-size: 0.95rem;
+    }
+
+    .social-links {
+        margin-left: 0.9rem;
+        gap: 0.65rem;
+    }
+
+    .social-links a {
+        font-size: 0.92rem;
+    }
+
+    .brand img {
+        width: 34px;
+        height: 34px;
+    }
+
+    .intro-copy p {
+        font-size: 1.1rem;
+    }
+
+    .field-row {
+        grid-template-columns: 1fr;
+    }
+
+    .appointment-picker {
+        grid-template-columns: 1fr;
+    }
+}
