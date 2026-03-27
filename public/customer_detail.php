@@ -41,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
     $lastName = trim((string) ($_POST['last_name'] ?? ''));
     $email = trim((string) ($_POST['email'] ?? ''));
     $phone = trim((string) ($_POST['phone'] ?? ''));
+    $customerTyp = trim((string) ($_POST['customer_typ'] ?? 'Privatperson'));
+    $companyName = trim((string) ($_POST['company_name'] ?? ''));
     $streetAddress = trim((string) ($_POST['street_address'] ?? ''));
     $postalCode = trim((string) ($_POST['postal_code'] ?? ''));
     $city = trim((string) ($_POST['city'] ?? ''));
@@ -49,10 +51,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
         $detailError = 'Ungültige Anfrage. Bitte Seite neu laden.';
     } elseif ($customerId <= 0) {
         $detailError = 'Ungültige Kundenauswahl.';
-    } elseif ($firstName === '' || $lastName === '') {
-        $detailError = 'Vorname und Nachname sind erforderlich.';
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $detailError = 'Bitte eine gültige E-Mail-Adresse eingeben.';
+    } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $detailError = 'Bitte eine gültige E-Mail-Adresse eingeben oder leer lassen.';
+    } elseif (!in_array($customerTyp, ['Firma', 'Privatperson'], true)) {
+        $detailError = 'Bitte einen gültigen Kundentyp auswählen.';
+    } elseif ($customerTyp === 'Firma' && $companyName === '') {
+        $detailError = 'Bitte einen Firmennamen angeben.';
     } else {
         try {
             $stmt = db()->prepare(
@@ -61,6 +65,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
                      last_name = :last_name,
                      email = :email,
                      phone = :phone,
+                     customer_typ = :customer_typ,
+                     company_name = :company_name,
                      street_address = :street_address,
                      postal_code = :postal_code,
                      city = :city
@@ -71,6 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
                 ':last_name' => $lastName,
                 ':email' => $email,
                 ':phone' => $phone,
+                ':customer_typ' => $customerTyp,
+                ':company_name' => $companyName,
                 ':street_address' => $streetAddress,
                 ':postal_code' => $postalCode,
                 ':city' => $city,
@@ -116,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
 if (!$recordDeleted && $customerId > 0) {
     try {
         $stmt = db()->prepare(
-            'SELECT id, first_name, last_name, email, phone, street_address, postal_code, city
+            'SELECT id, first_name, last_name, email, phone, customer_typ, company_name, street_address, postal_code, city
              FROM customer
              WHERE id = :id
              LIMIT 1'
@@ -188,14 +196,24 @@ function isReferenceDeleteError(Throwable $exception): bool
                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                 <input type="hidden" name="customer_id" value="<?= e((string) ($customerDetail['id'] ?? 0)) ?>">
 
+                <label for="customer_typ">Kundentyp *</label>
+                <select id="customer_typ" name="customer_typ" required>
+                    <?php $selectedCustomerType = (string) ($customerDetail['customer_typ'] ?? 'Privatperson'); ?>
+                    <option value="Privatperson"<?= $selectedCustomerType === 'Privatperson' ? ' selected' : '' ?>>Privatperson</option>
+                    <option value="Firma"<?= $selectedCustomerType === 'Firma' ? ' selected' : '' ?>>Firma</option>
+                </select>
+
+                <label for="customer_company_name">Firmenname</label>
+                <input id="customer_company_name" type="text" name="company_name" value="<?= e((string) ($customerDetail['company_name'] ?? '')) ?>">
+
                 <label for="customer_first_name">Vorname</label>
-                <input id="customer_first_name" type="text" name="first_name" value="<?= e((string) ($customerDetail['first_name'] ?? '')) ?>" required>
+                <input id="customer_first_name" type="text" name="first_name" value="<?= e((string) ($customerDetail['first_name'] ?? '')) ?>">
 
                 <label for="customer_last_name">Nachname</label>
-                <input id="customer_last_name" type="text" name="last_name" value="<?= e((string) ($customerDetail['last_name'] ?? '')) ?>" required>
+                <input id="customer_last_name" type="text" name="last_name" value="<?= e((string) ($customerDetail['last_name'] ?? '')) ?>">
 
                 <label for="customer_email">E-Mail</label>
-                <input id="customer_email" type="email" name="email" value="<?= e((string) ($customerDetail['email'] ?? '')) ?>" required>
+                <input id="customer_email" type="email" name="email" value="<?= e((string) ($customerDetail['email'] ?? '')) ?>">
 
                 <label for="customer_phone">Telefon</label>
                 <input id="customer_phone" type="text" name="phone" value="<?= e((string) ($customerDetail['phone'] ?? '')) ?>">
@@ -224,5 +242,29 @@ function isReferenceDeleteError(Throwable $exception): bool
         <?php endif; ?>
     </article>
 </main>
+<script>
+(() => {
+    const customerTypeField = document.getElementById('customer_typ');
+    const companyNameField = document.getElementById('customer_company_name');
+
+    if (!(customerTypeField instanceof HTMLSelectElement) || !(companyNameField instanceof HTMLInputElement)) {
+        return;
+    }
+
+    const syncCompanyFieldState = () => {
+        const isCompany = customerTypeField.value === 'Firma';
+        companyNameField.disabled = !isCompany;
+        if (!isCompany) {
+            companyNameField.value = '';
+            companyNameField.placeholder = 'Nur bei Kundentyp Firma';
+        } else {
+            companyNameField.placeholder = '';
+        }
+    };
+
+    customerTypeField.addEventListener('change', syncCompanyFieldState);
+    syncCompanyFieldState();
+})();
+</script>
 </body>
 </html>

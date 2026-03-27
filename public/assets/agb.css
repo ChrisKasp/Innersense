@@ -1,0 +1,76 @@
+:root {
+    --paper: #ececec;
+    --ink: #111827;
+    --text: #2a3345;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--text);
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    line-height: 1.6;
+    padding-top: 102px;
+}
+
+.agb-page {
+    width: min(980px, 94%);
+    margin: 0 auto;
+    padding: clamp(1.4rem, 3vw, 2.4rem) 0 clamp(2rem, 5vw, 3rem);
+}
+
+.agb-card {
+    max-width: 860px;
+    background: #f8fafc;
+    border: 1px solid #d4dae5;
+    border-radius: 12px;
+    padding: clamp(1.15rem, 2.2vw, 1.8rem);
+}
+
+.agb-section {
+    margin-bottom: 1.4rem;
+}
+
+.agb-card h1 {
+    margin: 0 0 1.6rem;
+    color: var(--ink);
+    font-family: "Sora", sans-serif;
+    font-size: clamp(1.7rem, 3.5vw, 2.5rem);
+    line-height: 1.14;
+    letter-spacing: -0.02em;
+}
+
+.agb-card h2 {
+    margin: 0 0 0.55rem;
+    color: var(--ink);
+    font-family: "Sora", sans-serif;
+    font-size: clamp(1.1rem, 2.1vw, 1.35rem);
+    line-height: 1.25;
+}
+
+.agb-card p {
+    margin: 0 0 1rem;
+    font-size: clamp(1rem, 1.9vw, 1.08rem);
+    line-height: 1.7;
+}
+
+.agb-card ul {
+    margin: 0.2rem 0 1rem 1.15rem;
+    padding: 0;
+}
+
+.agb-card li {
+    margin: 0 0 0.4rem;
+    font-size: clamp(1rem, 1.9vw, 1.08rem);
+    line-height: 1.7;
+}

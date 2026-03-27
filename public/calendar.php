@@ -109,6 +109,7 @@ $yearBlockedCounts = subtractCountMap($yearBlockedCountsRaw, $yearBookedCounts);
 $monthBlockedCounts = subtractCountMap($monthBlockedCountsRaw, $monthBookedCounts);
 $blockedDaySlots = array_diff_key($blockedDaySlotsRaw, $bookedDaySlots);
 $dailySlots = buildHalfHourSlots('09:00', '20:00');
+$bookedDayCount = count($bookedDaySlots);
 $monthNamesDe = [
     1 => 'Januar',
     2 => 'Februar',
@@ -237,25 +238,36 @@ function subtractCountMap(array $base, array $subtract): array
 function getBookedCountsForYear(PDO $pdo, string $requestTable, int $year): array
 {
     $stmt = $pdo->prepare(
-        "SELECT preferred_date, preferred_time
-         FROM {$requestTable}
-         WHERE preferred_date IS NOT NULL
-           AND YEAR(preferred_date) = :year
-           AND TRIM(COALESCE(preferred_time, '')) <> ''"
+        "SELECT DATE_FORMAT(cr.preferred_date, '%Y-%m-%d') AS preferred_date,
+                cr.preferred_time,
+                wr.time_effort
+         FROM {$requestTable} cr
+         LEFT JOIN customer_vehicle cv
+            ON cv.id = cr.customer_vehicle_id
+         LEFT JOIN workload_reference wr
+            ON wr.cleaning_package = cr.cleaning_package
+           AND wr.vehicle_type = cv.vehicle_type
+         WHERE cr.preferred_date IS NOT NULL
+           AND YEAR(cr.preferred_date) = :year
+           AND TRIM(COALESCE(cr.preferred_time, '')) <> ''"
     );
     $stmt->execute([':year' => $year]);
 
     $counts = [];
     foreach ($stmt->fetchAll() as $row) {
-        $date = (string) ($row['preferred_date'] ?? '');
-        $time = normalizeHalfHourSlot((string) ($row['preferred_time'] ?? ''));
-        if ($date === '' || $time === null) {
-            continue;
-        }
+        $preferredDate = (string) ($row['preferred_date'] ?? '');
+        $preferredTime = (string) ($row['preferred_time'] ?? '');
+        $timeEffort = $row['time_effort'] ?? null;
 
-        $monthNum = (int) date('n', strtotime($date));
-        if ($monthNum >= 1 && $monthNum <= 12) {
-            $counts[$monthNum] = (int) ($counts[$monthNum] ?? 0) + 1;
+        foreach (expandRequestedSlots($preferredDate, $preferredTime, $timeEffort) as $slotDateTime) {
+            if ((int) $slotDateTime->format('Y') !== $year) {
+                continue;
+            }
+
+            $monthNum = (int) $slotDateTime->format('n');
+            if ($monthNum >= 1 && $monthNum <= 12) {
+                $counts[$monthNum] = (int) ($counts[$monthNum] ?? 0) + 1;
+            }
         }
     }
 
@@ -268,12 +280,19 @@ function getBookedCountsForYear(PDO $pdo, string $requestTable, int $year): arra
 function getBookedCountsForMonth(PDO $pdo, string $requestTable, int $year, int $month): array
 {
     $stmt = $pdo->prepare(
-        "SELECT DATE_FORMAT(preferred_date, '%Y-%m-%d') AS slot_key, preferred_time
-         FROM {$requestTable}
-         WHERE preferred_date IS NOT NULL
-           AND YEAR(preferred_date) = :year
-           AND MONTH(preferred_date) = :month
-           AND TRIM(COALESCE(preferred_time, '')) <> ''"
+        "SELECT DATE_FORMAT(cr.preferred_date, '%Y-%m-%d') AS preferred_date,
+                cr.preferred_time,
+                wr.time_effort
+         FROM {$requestTable} cr
+         LEFT JOIN customer_vehicle cv
+            ON cv.id = cr.customer_vehicle_id
+         LEFT JOIN workload_reference wr
+            ON wr.cleaning_package = cr.cleaning_package
+           AND wr.vehicle_type = cv.vehicle_type
+         WHERE cr.preferred_date IS NOT NULL
+           AND YEAR(cr.preferred_date) = :year
+           AND MONTH(cr.preferred_date) = :month
+           AND TRIM(COALESCE(cr.preferred_time, '')) <> ''"
     );
     $stmt->execute([
         ':year' => $year,
@@ -282,40 +301,116 @@ function getBookedCountsForMonth(PDO $pdo, string $requestTable, int $year, int 
 
     $counts = [];
     foreach ($stmt->fetchAll() as $row) {
-        $slotKey = (string) ($row['slot_key'] ?? '');
-        $time = normalizeHalfHourSlot((string) ($row['preferred_time'] ?? ''));
-        if ($slotKey === '' || $time === null) {
-            continue;
-        }
+        $preferredDate = (string) ($row['preferred_date'] ?? '');
+        $preferredTime = (string) ($row['preferred_time'] ?? '');
+        $timeEffort = $row['time_effort'] ?? null;
 
-        $counts[$slotKey] = (int) ($counts[$slotKey] ?? 0) + 1;
+        foreach (expandRequestedSlots($preferredDate, $preferredTime, $timeEffort) as $slotDateTime) {
+            if ((int) $slotDateTime->format('Y') !== $year || (int) $slotDateTime->format('n') !== $month) {
+                continue;
+            }
+
+            $slotKey = $slotDateTime->format('Y-m-d');
+            $counts[$slotKey] = (int) ($counts[$slotKey] ?? 0) + 1;
+        }
     }
 
     return $counts;
 }
 
 /**
- * @return array<string, bool>
+ * @return array<string, string>
  */
 function getBookedSlotsForDate(PDO $pdo, string $requestTable, string $date): array
 {
     $stmt = $pdo->prepare(
-        "SELECT preferred_time
-         FROM {$requestTable}
-         WHERE preferred_date = :preferred_date
-           AND TRIM(COALESCE(preferred_time, '')) <> ''"
+        "SELECT DATE_FORMAT(cr.preferred_date, '%Y-%m-%d') AS preferred_date,
+                cr.preferred_time,
+                     wr.time_effort,
+                     c.first_name,
+                     c.last_name
+         FROM {$requestTable} cr
+            LEFT JOIN customer c
+                ON c.id = cr.customer_id
+         LEFT JOIN customer_vehicle cv
+            ON cv.id = cr.customer_vehicle_id
+         LEFT JOIN workload_reference wr
+            ON wr.cleaning_package = cr.cleaning_package
+           AND wr.vehicle_type = cv.vehicle_type
+         WHERE cr.preferred_date = :preferred_date
+           AND TRIM(COALESCE(cr.preferred_time, '')) <> ''"
     );
     $stmt->execute([':preferred_date' => $date]);
 
     $slots = [];
     foreach ($stmt->fetchAll() as $row) {
-        $normalized = normalizeHalfHourSlot((string) ($row['preferred_time'] ?? ''));
-        if ($normalized !== null) {
-            $slots[$normalized] = true;
+        $preferredDate = (string) ($row['preferred_date'] ?? '');
+        $preferredTime = (string) ($row['preferred_time'] ?? '');
+        $timeEffort = $row['time_effort'] ?? null;
+        $customerName = trim(
+            trim((string) ($row['first_name'] ?? '')) . ' ' . trim((string) ($row['last_name'] ?? ''))
+        );
+        if ($customerName === '') {
+            $customerName = 'Unbekannt';
+        }
+
+        foreach (expandRequestedSlots($preferredDate, $preferredTime, $timeEffort) as $slotDateTime) {
+            if ($slotDateTime->format('Y-m-d') !== $date) {
+                continue;
+            }
+
+            $slotKey = $slotDateTime->format('H:i');
+            if (!isset($slots[$slotKey])) {
+                $slots[$slotKey] = $customerName;
+                continue;
+            }
+
+            $existingNames = array_map('trim', explode(', ', $slots[$slotKey]));
+            if (!in_array($customerName, $existingNames, true)) {
+                $slots[$slotKey] .= ', ' . $customerName;
+            }
         }
     }
 
     return $slots;
+}
+
+/**
+ * @return list<DateTimeImmutable>
+ */
+function expandRequestedSlots(string $preferredDate, string $preferredTime, $timeEffort): array
+{
+    $normalizedTime = normalizeHalfHourSlot($preferredTime);
+    if (!isValidDate($preferredDate) || $normalizedTime === null) {
+        return [];
+    }
+
+    $startDateTime = DateTimeImmutable::createFromFormat('Y-m-d H:i', $preferredDate . ' ' . $normalizedTime);
+    if (!$startDateTime instanceof DateTimeImmutable) {
+        return [];
+    }
+
+    $slotCount = resolveSlotCountFromTimeEffort($timeEffort);
+    $slots = [];
+    for ($index = 0; $index < $slotCount; $index++) {
+        $slots[] = $startDateTime->modify('+' . ($index * 30) . ' minutes');
+    }
+
+    return $slots;
+}
+
+function resolveSlotCountFromTimeEffort($timeEffort): int
+{
+    if (!is_numeric($timeEffort)) {
+        return 1;
+    }
+
+    $hours = (float) $timeEffort;
+    if ($hours <= 0.0) {
+        return 1;
+    }
+
+    return max(1, (int) ceil($hours * 2.0));
 }
 
 function normalizeHalfHourSlot(string $value): ?string
@@ -476,9 +571,12 @@ $gridStart = $monthStart->modify('-' . $gridStartOffset . ' days');
                 <section class="calendar-year-grid">
                     <?php for ($m = 1; $m <= 12; $m++): ?>
                         <?php $monthDate = DateTimeImmutable::createFromFormat('Y-m-d', sprintf('%04d-%02d-01', $year, $m)); ?>
+                        <?php $blockedCount = (int) ($yearBlockedCounts[$m] ?? 0); ?>
+                        <?php $bookedCount = (int) ($yearBookedCounts[$m] ?? 0); ?>
                         <a class="calendar-month-card" href="calendar.php?view=month&amp;date=<?= e(($monthDate instanceof DateTimeImmutable) ? $monthDate->format('Y-m-d') : $selectedDateStr) ?>">
                             <strong><?= e($monthNamesDe[$m] ?? (string) $m) ?></strong>
-                            <span><?= e((string) ($yearBlockedCounts[$m] ?? 0)) ?> blockierte Slots</span>
+                            <span class="calendar-meta"><?= e((string) $bookedCount) ?> belegt</span>
+                            <span class="calendar-meta"><?= e((string) $blockedCount) ?> blockiert</span>
                         </a>
                     <?php endfor; ?>
                 </section>
@@ -496,10 +594,12 @@ $gridStart = $monthStart->modify('-' . $gridStartOffset . ' days');
                             $cellKey = $cellDate->format('Y-m-d');
                             $isCurrentMonth = $cellDate->format('m') === $monthStart->format('m');
                             $blockedCount = (int) ($monthBlockedCounts[$cellKey] ?? 0);
+                            $bookedCount = (int) ($monthBookedCounts[$cellKey] ?? 0);
                             ?>
                             <a class="calendar-day-cell<?= $isCurrentMonth ? '' : ' is-muted' ?>" href="calendar.php?view=day&amp;date=<?= e($cellKey) ?>">
                                 <strong><?= e($cellDate->format('d')) ?></strong>
-                                <span><?= e((string) $blockedCount) ?> blockiert</span>
+                                <span class="calendar-meta"><?= e((string) $bookedCount) ?> belegt</span>
+                                <span class="calendar-meta"><?= e((string) $blockedCount) ?> blockiert</span>
                             </a>
                         <?php endfor; ?>
                     </section>
@@ -507,11 +607,15 @@ $gridStart = $monthStart->modify('-' . $gridStartOffset . ' days');
             <?php else: ?>
                 <section class="calendar-day-panel">
                     <h2><?= e($selectedDate->format('d.m.Y')) ?></h2>
+                    <p class="calendar-day-summary"><?= e((string) $bookedDayCount) ?> belegte Termine</p>
                     <div class="calendar-slot-list">
                         <?php foreach ($dailySlots as $slot): ?>
                             <?php
                             $isBooked = isset($bookedDaySlots[$slot]);
                             $isBlocked = !$isBooked && isset($blockedDaySlots[$slot]);
+                            $bookedLabel = $isBooked
+                                ? ('Belegt durch ' . ((string) ($bookedDaySlots[$slot] ?? 'Unbekannt')))
+                                : ($isBlocked ? 'Blockiert' : 'Frei');
                             $action = $isBooked ? '' : ($isBlocked ? 'unblock_slot' : 'block_slot');
                             ?>
                             <form method="post" action="calendar.php?view=day&amp;date=<?= e($selectedDateStr) ?>" class="calendar-slot-row">
@@ -522,7 +626,7 @@ $gridStart = $monthStart->modify('-' . $gridStartOffset . ' days');
 
                                 <span class="slot-time"><?= e($slot) ?></span>
                                 <span class="slot-state <?= $isBooked ? 'is-booked' : ($isBlocked ? 'is-blocked' : 'is-open') ?>">
-                                    <?= $isBooked ? 'Belegt' : ($isBlocked ? 'Blockiert' : 'Frei') ?>
+                                    <?= e($bookedLabel) ?>
                                 </span>
                                 <button
                                     type="<?= $isBooked ? 'button' : 'submit' ?>"

@@ -21,10 +21,12 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 }
 
 require_once dirname(__DIR__) . '/config/database.php';
+require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
 
 $pdo = db();
 ensureBlockedSlotTable($pdo);
 ensurePageHitCounterTable($pdo);
+EmailTemplateService::ensureTables($pdo);
 
 if (!isset($_GET['ajax'])) {
     incrementPageHitCounter($pdo, 'index');
@@ -91,20 +93,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') 
         && $humanCheck;
 
     if ($valid) {
-        $subject = 'Neue Anfrage Innersense Kontaktformular';
-        $body = "Neue Anfrage ueber das Kontaktformular\n\n"
-            . 'Produkte/Dienstleistungen: ' . ($products === [] ? '-' : implode(', ', $products)) . "\n"
-            . 'Was brauchst du?: ' . ($needs !== '' ? $needs : '-') . "\n"
-            . 'Wunschdatum: ' . ($preferredDate !== '' ? $preferredDate : '-') . "\n"
-            . 'Wunschzeit: ' . ($preferredTime !== '' ? $preferredTime : '-') . "\n"
-            . 'Hilfreiche Links: ' . ($helpfulLinks !== '' ? $helpfulLinks : '-') . "\n"
-            . 'Verfuegbares Budget: ' . ($budget !== '' ? $budget : '-') . "\n"
-            . 'Name: ' . $name . "\n"
-            . 'E-Mail: ' . $email . "\n"
-            . 'Telefon: ' . ($phone !== '' ? $phone : '-') . "\n"
-            . "\n"
-            . 'Datenschutz-Einwilligung: Ja' . "\n"
-            . 'Mensch-Check: Ja' . "\n";
+        $nameParts = preg_split('/\s+/', $name) ?: [];
+        $firstName = trim((string) ($nameParts[0] ?? ''));
+        $lastName = trim((string) implode(' ', array_slice($nameParts, 1)));
+
+        $context = [
+            'customer.first_name' => $firstName,
+            'customer.last_name' => $lastName,
+            'customer.full_name' => $name,
+            'customer.email' => $email,
+            'customer.phone' => $phone,
+            'customer.street_address' => '-',
+            'customer.postal_code' => '-',
+            'customer.city' => '-',
+            'vehicle.brand' => '-',
+            'vehicle.model' => '-',
+            'vehicle.type' => '-',
+            'vehicle.license_plate' => '-',
+            'appointment.date' => $preferredDate,
+            'appointment.time' => $preferredTime,
+            'contact.cleaning_package' => '-',
+            'contact.special_wishes' => '-',
+            'contact.products' => $products === [] ? '-' : implode(', ', $products),
+            'contact.needs' => $needs,
+            'contact.helpful_links' => $helpfulLinks,
+            'contact.budget' => $budget,
+        ];
+
+        $notificationMail = EmailTemplateService::renderForType(
+            $pdo,
+            EmailTemplateService::TYPE_CONTACT_REQUEST_NOTIFICATION,
+            $context
+        );
+
+        if ($notificationMail === null) {
+            $notificationMail = [
+                'subject' => 'Neue Anfrage Innersense Kontaktformular',
+                'body' => 'Es wurde eine neue Anfrage ueber das Kontaktformular uebermittelt.',
+            ];
+        }
 
         $headers = [
             'MIME-Version: 1.0',
@@ -113,7 +140,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') 
             'Reply-To: ' . $email,
         ];
 
-        $sent = @mail($to, $subject, $body, implode("\r\n", $headers));
+        $sent = @mail($to, $notificationMail['subject'], $notificationMail['body'], implode("\r\n", $headers));
+
+        $ackMail = EmailTemplateService::renderForType(
+            $pdo,
+            EmailTemplateService::TYPE_CONTACT_REQUEST_ACKNOWLEDGEMENT,
+            $context
+        );
+        if ($ackMail !== null) {
+            $ackHeaders = [
+                'MIME-Version: 1.0',
+                'Content-Type: text/plain; charset=UTF-8',
+                'From: Innersense Website <' . $from . '>',
+                'Reply-To: ' . $to,
+            ];
+            @mail($email, $ackMail['subject'], $ackMail['body'], implode("\r\n", $ackHeaders));
+        }
+
         header('Location: index.php?contact=' . ($sent ? 'success' : 'error') . '#kontakt');
         exit;
     }

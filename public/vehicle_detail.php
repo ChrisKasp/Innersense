@@ -184,6 +184,7 @@ if (
     $model = trim((string) ($_POST['model'] ?? ''));
     $vehicleType = trim((string) ($_POST['vehicle_type'] ?? ''));
     $licensePlate = trim((string) ($_POST['license_plate'] ?? ''));
+    $note = trim((string) ($_POST['note'] ?? ''));
 
     $allowedTypes = loadVehicleTypeOptions($pdo);
     if (!hash_equals($csrfToken, $postedToken)) {
@@ -203,7 +204,8 @@ if (
                          brand = :brand,
                          model = :model,
                          vehicle_type = :vehicle_type,
-                         license_plate = :license_plate
+                         license_plate = :license_plate,
+                         note = :note
                      WHERE id = :id'
                 );
                 $stmt->execute([
@@ -212,6 +214,7 @@ if (
                     ':model' => $model,
                     ':vehicle_type' => ($vehicleType !== '' ? $vehicleType : null),
                     ':license_plate' => $licensePlate,
+                    ':note' => ($note !== '' ? $note : null),
                     ':id' => $vehicleId,
                 ]);
 
@@ -220,8 +223,8 @@ if (
             }
 
             $stmt = $pdo->prepare(
-                'INSERT INTO ' . $vehicleTable . ' (customer_id, brand, model, vehicle_type, license_plate)
-                 VALUES (:customer_id, :brand, :model, :vehicle_type, :license_plate)'
+                'INSERT INTO ' . $vehicleTable . ' (customer_id, brand, model, vehicle_type, license_plate, note)
+                 VALUES (:customer_id, :brand, :model, :vehicle_type, :license_plate, :note)'
             );
             $stmt->execute([
                 ':customer_id' => $customerId,
@@ -229,6 +232,7 @@ if (
                 ':model' => $model,
                 ':vehicle_type' => ($vehicleType !== '' ? $vehicleType : null),
                 ':license_plate' => $licensePlate,
+                ':note' => ($note !== '' ? $note : null),
             ]);
 
             $newVehicleId = (int) $pdo->lastInsertId();
@@ -280,7 +284,7 @@ if (
 if (!$recordDeleted && $vehicleTable !== null && $vehicleId > 0) {
     try {
         $stmt = $pdo->prepare(
-            'SELECT id, customer_id, brand, model, vehicle_type, license_plate
+            'SELECT id, customer_id, brand, model, vehicle_type, license_plate, note
              FROM ' . $vehicleTable . '
              WHERE id = :id
              LIMIT 1'
@@ -304,6 +308,7 @@ if (!$recordDeleted && $vehicleTable !== null && $vehicleId > 0) {
         'model' => '',
         'vehicle_type' => '',
         'license_plate' => '',
+        'note' => '',
     ];
 }
 
@@ -364,7 +369,7 @@ $isCreateMode = ((int) ($vehicleDetail['id'] ?? 0)) <= 0;
                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                 <input type="hidden" name="vehicle_id" value="<?= e((string) ($vehicleDetail['id'] ?? 0)) ?>">
 
-                <label for="vehicle_customer_id">Kunde</label>
+                <label for="vehicle_customer_id">Kunde *</label>
                 <select id="vehicle_customer_id" name="customer_id" required>
                     <option value="">Bitte auswählen</option>
                     <?php foreach ($customerOptions as $customer): ?>
@@ -378,7 +383,7 @@ $isCreateMode = ((int) ($vehicleDetail['id'] ?? 0)) <= 0;
                     <?php endforeach; ?>
                 </select>
 
-                <label for="vehicle_brand">Marke</label>
+                <label for="vehicle_brand">Marke *</label>
                 <input id="vehicle_brand" type="text" name="brand" list="vehicle_brand_options" value="<?= e((string) ($vehicleDetail['brand'] ?? '')) ?>" required>
                 <datalist id="vehicle_brand_options">
                     <?php foreach ($vehicleBrandOptions as $brandOption): ?>
@@ -386,7 +391,7 @@ $isCreateMode = ((int) ($vehicleDetail['id'] ?? 0)) <= 0;
                     <?php endforeach; ?>
                 </datalist>
 
-                <label for="vehicle_model">Modell</label>
+                <label for="vehicle_model">Modell *</label>
                 <input id="vehicle_model" type="text" name="model" value="<?= e((string) ($vehicleDetail['model'] ?? '')) ?>" required>
 
                 <label for="vehicle_type">Typ</label>
@@ -399,6 +404,9 @@ $isCreateMode = ((int) ($vehicleDetail['id'] ?? 0)) <= 0;
 
                 <label for="vehicle_license_plate">Kennzeichen</label>
                 <input id="vehicle_license_plate" type="text" name="license_plate" value="<?= e((string) ($vehicleDetail['license_plate'] ?? '')) ?>">
+
+                <label for="vehicle_note">Hinweise</label>
+                <textarea id="vehicle_note" name="note" rows="4"><?= e((string) ($vehicleDetail['note'] ?? '')) ?></textarea>
 
             </form>
 

@@ -21,9 +21,11 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 }
 
 require_once dirname(__DIR__) . '/config/database.php';
+require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
 
 $pdo = db();
 ensureBlockedSlotTable($pdo);
+EmailTemplateService::ensureTables($pdo);
 
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'available_slots') {
     header('Content-Type: application/json; charset=UTF-8');
@@ -112,33 +114,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             saveContactRequest(db(), $formData, $consentGiven);
 
             $to = $contactToEmail;
-            $subject = 'Neue Anfrage ueber kontakt.php';
-            $body = "Neue Kontaktanfrage\n\n"
-                . 'Vorname: ' . $formData['first_name'] . "\n"
-                . 'Nachname: ' . $formData['last_name'] . "\n"
-                . 'E-Mail: ' . $formData['email'] . "\n"
-                . 'Telefon: ' . ($formData['phone'] !== '' ? $formData['phone'] : '-') . "\n\n"
-                . 'Strasse + Hausnummer: ' . $formData['street_address'] . "\n"
-                . 'PLZ: ' . ($formData['postal_code'] !== '' ? $formData['postal_code'] : '-') . "\n"
-                . 'Ort: ' . ($formData['city'] !== '' ? $formData['city'] : '-') . "\n"
-                . 'Automarke: ' . $formData['vehicle_brand'] . "\n"
-                . 'Modell: ' . $formData['vehicle_model'] . "\n"
-                . 'Fahrzeugtyp: ' . ($formData['vehicle_type'] !== '' ? $formData['vehicle_type'] : '-') . "\n"
-                . 'Kennzeichen: ' . ($formData['license_plate'] !== '' ? $formData['license_plate'] : '-') . "\n"
-                . 'Reinigungspaket: ' . $formData['cleaning_package'] . "\n"
-                . 'Wunschdatum: ' . ($formData['preferred_date'] !== '' ? $formData['preferred_date'] : '-') . "\n"
-                . 'Wunschzeit: ' . ($formData['preferred_time'] !== '' ? $formData['preferred_time'] : '-') . "\n\n"
-                . "Besondere Wuensche:\n"
-                . ($formData['special_wishes'] !== '' ? $formData['special_wishes'] : '-') . "\n";
+            $context = [
+                'customer.first_name' => $formData['first_name'],
+                'customer.last_name' => $formData['last_name'],
+                'customer.full_name' => trim($formData['first_name'] . ' ' . $formData['last_name']),
+                'customer.email' => $formData['email'],
+                'customer.phone' => $formData['phone'],
+                'customer.street_address' => $formData['street_address'],
+                'customer.postal_code' => $formData['postal_code'],
+                'customer.city' => $formData['city'],
+                'vehicle.brand' => $formData['vehicle_brand'],
+                'vehicle.model' => $formData['vehicle_model'],
+                'vehicle.type' => $formData['vehicle_type'],
+                'vehicle.license_plate' => $formData['license_plate'],
+                'appointment.date' => $formData['preferred_date'],
+                'appointment.time' => $formData['preferred_time'],
+                'contact.cleaning_package' => $formData['cleaning_package'],
+                'contact.special_wishes' => $formData['special_wishes'],
+                'contact.products' => '-',
+                'contact.needs' => '-',
+                'contact.helpful_links' => '-',
+                'contact.budget' => '-',
+            ];
 
+            $notificationMail = EmailTemplateService::renderForType(
+                $pdo,
+                EmailTemplateService::TYPE_CONTACT_REQUEST_NOTIFICATION,
+                $context
+            );
+            if ($notificationMail === null) {
+                $notificationMail = [
+                    'subject' => 'Neue Kontakt-Anfrage von ' . trim($formData['first_name'] . ' ' . $formData['last_name']),
+                    'body' => 'Es wurde eine neue Kontakt-Anfrage uebermittelt.',
+                ];
+            }
+
+            $from = getenv('CONTACT_FROM_EMAIL') ?: 'no-reply@innersense.sellerie.net';
             $headers = [
                 'MIME-Version: 1.0',
                 'Content-Type: text/plain; charset=UTF-8',
-                'From: Innersense Website <no-reply@innersense.sellerie.net>',
+                'From: Innersense Website <' . $from . '>',
                 'Reply-To: ' . $formData['email'],
             ];
 
-            @mail($to, $subject, $body, implode("\r\n", $headers));
+            @mail($to, $notificationMail['subject'], $notificationMail['body'], implode("\r\n", $headers));
+
+            $ackMail = EmailTemplateService::renderForType(
+                $pdo,
+                EmailTemplateService::TYPE_CONTACT_REQUEST_ACKNOWLEDGEMENT,
+                $context
+            );
+            if ($ackMail !== null && filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
+                $ackHeaders = [
+                    'MIME-Version: 1.0',
+                    'Content-Type: text/plain; charset=UTF-8',
+                    'From: Innersense Website <' . $from . '>',
+                    'Reply-To: ' . $contactToEmail,
+                ];
+                @mail($formData['email'], $ackMail['subject'], $ackMail['body'], implode("\r\n", $ackHeaders));
+            }
+
             header('Location: kontakt.php?contact=success#formular');
             exit;
         } catch (Throwable $exception) {

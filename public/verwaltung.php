@@ -6,11 +6,13 @@ session_start();
 header('Content-Type: text/html; charset=UTF-8');
 
 require_once dirname(__DIR__) . '/config/env.php';
+require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
 loadEnv(dirname(__DIR__) . '/.env');
 
 $adminPassword = 'innersense4.gerome';
 $authConfigFile = dirname(__DIR__) . '/config/verwaltung_auth.php';
 $publicContactConfigFile = dirname(__DIR__) . '/config/public_contact.php';
+$envFile = detectEnvFilePath(dirname(__DIR__));
 $idleTimeoutSeconds = 600;
 $loginError = '';
 $settingsNotice = '';
@@ -26,6 +28,10 @@ $appointmentLoadError = '';
 $vehicleTypeRows = [];
 $cleaningPackageRows = [];
 $workloadReferenceRows = [];
+$emailTemplateRows = [];
+$emailTypeAssignments = [];
+$emailTypeLabels = EmailTemplateService::getEmailTypeLabels();
+$allowedEmailPlaceholders = EmailTemplateService::getAllowedPlaceholders();
 $dashboardOpenRequests = 0;
 $dashboardOpenRequestsSinceYesterday = 0;
 $dashboardPlannedAppointments = 0;
@@ -34,7 +40,7 @@ $dashboardCustomerCount = 0;
 $dashboardNewCustomersThisMonth = 0;
 $dashboardVehicleCount = 0;
 $dashboardHomepageHits = 0;
-$availableViews = ['dashboard', 'requests', 'customers', 'workload', 'vehicles', 'appointments', 'calendar', 'settings_social', 'settings_password', 'settings_vehicle_types', 'settings_cleaning_packages', 'settings_workload_reference'];
+$availableViews = ['dashboard', 'requests', 'customers', 'workload', 'vehicles', 'appointments', 'calendar', 'settings_social', 'settings_password', 'settings_vehicle_types', 'settings_cleaning_packages', 'settings_email_templates', 'settings_workload_reference'];
 $requestedView = (string) ($_GET['view'] ?? 'dashboard');
 $initialView = in_array($requestedView, $availableViews, true) ? $requestedView : 'dashboard';
 if ($requestedView === 'settings') {
@@ -53,6 +59,7 @@ $socialMediaSettings = loadSocialMediaSettings($publicContactConfigFile, [
     'facebook_url' => (string) (getenv('FACEBOOK_URL') ?: ''),
     'instagram_url' => (string) (getenv('INSTAGRAM_URL') ?: ''),
     'contact_email' => (string) (getenv('CONTACT_TO_EMAIL') ?: ''),
+    'business_address' => (string) (getenv('BUSINESS_ADDRESS') ?: ''),
 ]);
 
 if (isset($_GET['logout']) && $_GET['logout'] === '1') {
@@ -136,6 +143,7 @@ if ($isAuthenticated) {
             $facebookUrl = trim((string) ($_POST['facebook_url'] ?? ''));
             $instagramUrl = trim((string) ($_POST['instagram_url'] ?? ''));
             $contactEmail = trim((string) ($_POST['contact_email'] ?? ''));
+            $businessAddress = trim((string) ($_POST['business_address'] ?? ''));
 
             if ($facebookUrl !== '' && filter_var($facebookUrl, FILTER_VALIDATE_URL) === false) {
                 $settingsError = 'Facebook-URL ist ungültig.';
@@ -152,14 +160,25 @@ if ($isAuthenticated) {
                     'facebook_url' => $facebookUrl,
                     'instagram_url' => $instagramUrl,
                     'contact_email' => $contactEmail,
+                    'business_address' => $businessAddress,
                 ];
 
-                if (!saveSocialMediaSettings($publicContactConfigFile, $nextSettings)) {
-                    $settingsError = 'Social-Media-Einstellungen konnten nicht gespeichert werden. Dateirechte für config/ prüfen.';
+                if (!upsertEnvValues($envFile, [
+                    'WHATSAPP_NUMBER' => $whatsAppNumber,
+                    'FACEBOOK_URL' => $facebookUrl,
+                    'INSTAGRAM_URL' => $instagramUrl,
+                    'CONTACT_TO_EMAIL' => $contactEmail,
+                    'BUSINESS_ADDRESS' => $businessAddress,
+                ])) {
+                    $settingsError = '.env konnte nicht aktualisiert werden. Dateirechte für das Projektverzeichnis prüfen.';
                     $initialView = 'settings_social';
                 } else {
+                    // Keep legacy config file in sync when possible, but do not block successful .env updates.
+                    $legacyConfigSaved = saveSocialMediaSettings($publicContactConfigFile, $nextSettings);
                     $socialMediaSettings = $nextSettings;
-                    $settingsNotice = 'Social-Media-Einstellungen wurden gespeichert.';
+                    $settingsNotice = $legacyConfigSaved
+                        ? 'Social-Media-Einstellungen wurden gespeichert.'
+                        : 'Kontaktdaten wurden in .env gespeichert (config/public_contact.php konnte nicht aktualisiert werden).';
                     $initialView = 'settings_social';
                 }
             }
@@ -170,6 +189,7 @@ if ($isAuthenticated) {
     ensureVehicleTypeTable(db());
     ensureCleaningPackageTable(db());
     ensureWorkloadReferenceTable(db());
+    EmailTemplateService::ensureTables(db());
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? '') === 'add_vehicle_type') {
         $postedToken = (string) ($_POST['csrf_token'] ?? '');
@@ -307,6 +327,61 @@ if ($isAuthenticated) {
         }
     }
 
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? '') === 'save_email_template') {
+        $postedToken = (string) ($_POST['csrf_token'] ?? '');
+        if (!hash_equals($csrfToken, $postedToken)) {
+            $settingsError = 'Ungueltige Anfrage. Bitte Seite neu laden.';
+            $initialView = 'settings_email_templates';
+        } else {
+            $templateId = max(0, (int) ($_POST['template_id'] ?? 0));
+            $templateName = trim((string) ($_POST['template_name'] ?? ''));
+            $subjectTemplate = trim((string) ($_POST['subject_template'] ?? ''));
+            $bodyTemplate = trim((string) ($_POST['body_template'] ?? ''));
+
+            if ($templateName === '' || $subjectTemplate === '' || $bodyTemplate === '') {
+                $settingsError = 'Bitte Name, Betreff und Inhalt der E-Mail-Vorlage ausfuellen.';
+                $initialView = 'settings_email_templates';
+            } else {
+                $invalidPlaceholders = EmailTemplateService::findInvalidPlaceholders($subjectTemplate, $bodyTemplate);
+                if ($invalidPlaceholders !== []) {
+                    $settingsError = 'Unbekannte Platzhalter: ' . implode(', ', $invalidPlaceholders);
+                    $initialView = 'settings_email_templates';
+                } elseif (!EmailTemplateService::saveTemplate(db(), $templateId, $templateName, $subjectTemplate, $bodyTemplate)) {
+                    $settingsError = 'E-Mail-Vorlage konnte nicht gespeichert werden.';
+                    $initialView = 'settings_email_templates';
+                } else {
+                    $settingsNotice = 'E-Mail-Vorlage wurde gespeichert.';
+                    $initialView = 'settings_email_templates';
+                }
+            }
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? '') === 'assign_email_template') {
+        $postedToken = (string) ($_POST['csrf_token'] ?? '');
+        if (!hash_equals($csrfToken, $postedToken)) {
+            $settingsError = 'Ungueltige Anfrage. Bitte Seite neu laden.';
+            $initialView = 'settings_email_templates';
+        } else {
+            $emailTypeKey = trim((string) ($_POST['email_type_key'] ?? ''));
+            $templateId = max(0, (int) ($_POST['template_id'] ?? 0));
+
+            if (!EmailTemplateService::isValidEmailTypeKey($emailTypeKey)) {
+                $settingsError = 'Unbekannter E-Mail-Typ.';
+                $initialView = 'settings_email_templates';
+            } elseif ($templateId <= 0) {
+                $settingsError = 'Bitte eine gueltige E-Mail-Vorlage auswaehlen.';
+                $initialView = 'settings_email_templates';
+            } elseif (!EmailTemplateService::assignTemplateToType(db(), $emailTypeKey, $templateId)) {
+                $settingsError = 'Zuordnung fuer E-Mail-Typ konnte nicht gespeichert werden.';
+                $initialView = 'settings_email_templates';
+            } else {
+                $settingsNotice = 'Zuordnung fuer E-Mail-Typ wurde gespeichert.';
+                $initialView = 'settings_email_templates';
+            }
+        }
+    }
+
     try {
         $stmt = db()->query(
             "SELECT c.id,
@@ -314,6 +389,8 @@ if ($isAuthenticated) {
                     c.last_name,
                     c.email,
                     c.phone,
+                                        c.customer_typ,
+                                        c.company_name,
                     c.street_address,
                     c.postal_code,
                     c.city,
@@ -321,7 +398,7 @@ if ($isAuthenticated) {
                     COUNT(cv.id) AS vehicle_count
              FROM customer c
              LEFT JOIN customer_vehicle cv ON cv.customer_id = c.id
-               GROUP BY c.id, c.first_name, c.last_name, c.email, c.phone, c.street_address, c.postal_code, c.city, c.created_at
+                             GROUP BY c.id, c.first_name, c.last_name, c.email, c.phone, c.customer_typ, c.company_name, c.street_address, c.postal_code, c.city, c.created_at
              ORDER BY c.created_at DESC, c.id DESC"
         );
         $rows = $stmt->fetchAll();
@@ -403,6 +480,7 @@ if ($isAuthenticated) {
                         cr.id,
                         cr.preferred_date,
                         cr.preferred_time,
+                        wr.time_effort,
                         COALESCE(cp.package_name, cr.cleaning_package) AS cleaning_package,
                         cr.status,
                         c.first_name,
@@ -415,6 +493,9 @@ if ($isAuthenticated) {
                     LEFT JOIN {$vehicleTable} cv ON cv.id = cr.customer_vehicle_id
                     LEFT JOIN vehicle_type_option vto ON vto.type_name = cv.vehicle_type
                     LEFT JOIN cleaning_package cp ON cp.package_name = cr.cleaning_package
+                    LEFT JOIN workload_reference wr
+                        ON wr.cleaning_package = COALESCE(cp.package_name, cr.cleaning_package)
+                        AND wr.vehicle_type = COALESCE(vto.type_name, cv.vehicle_type)
                     ORDER BY
                         cr.preferred_date IS NULL,
                         cr.preferred_date ASC,
@@ -515,6 +596,8 @@ if ($isAuthenticated) {
     $vehicleTypeRows = getVehicleTypes(db());
     $cleaningPackageRows = getCleaningPackages(db());
     $workloadReferenceRows = getWorkloadReferences(db());
+    $emailTemplateRows = EmailTemplateService::getTemplates(db());
+    $emailTypeAssignments = EmailTemplateService::getTypeAssignments(db());
 }
 
 function e(string $value): string
@@ -581,6 +664,7 @@ function loadSocialMediaSettings(string $configFile, array $defaults): array
         'facebook_url' => (string) ($defaults['facebook_url'] ?? ''),
         'instagram_url' => (string) ($defaults['instagram_url'] ?? ''),
         'contact_email' => (string) ($defaults['contact_email'] ?? ''),
+        'business_address' => (string) ($defaults['business_address'] ?? ''),
     ];
 
     if (!is_file($configFile) || !is_readable($configFile)) {
@@ -611,6 +695,7 @@ function saveSocialMediaSettings(string $configFile, array $settings): bool
         'facebook_url' => (string) ($settings['facebook_url'] ?? ''),
         'instagram_url' => (string) ($settings['instagram_url'] ?? ''),
         'contact_email' => (string) ($settings['contact_email'] ?? ''),
+        'business_address' => (string) ($settings['business_address'] ?? ''),
     ];
 
     $content = "<?php\nreturn " . var_export($payload, true) . ";\n";
@@ -633,6 +718,97 @@ function saveSocialMediaSettings(string $configFile, array $settings): bool
 
     @chmod($configFile, 0640);
     return true;
+}
+
+function detectEnvFilePath(string $projectRoot): string
+{
+    $candidates = [
+        rtrim($projectRoot, '/\\') . '/.env',
+        rtrim(dirname($projectRoot), '/\\') . '/.env',
+    ];
+
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return $candidates[0];
+}
+
+/**
+ * @param array<string, string> $values
+ */
+function upsertEnvValues(string $envFile, array $values): bool
+{
+    $lines = [];
+    if (is_file($envFile)) {
+        if (!is_readable($envFile)) {
+            return false;
+        }
+
+        $loaded = file($envFile, FILE_IGNORE_NEW_LINES);
+        if (!is_array($loaded)) {
+            return false;
+        }
+
+        $lines = $loaded;
+    }
+
+    $remaining = $values;
+    foreach ($lines as $index => $line) {
+        if (!is_string($line)) {
+            continue;
+        }
+
+        if (preg_match('/^\s*([A-Z0-9_]+)\s*=/', $line, $matches) !== 1) {
+            continue;
+        }
+
+        $key = (string) ($matches[1] ?? '');
+        if (!array_key_exists($key, $remaining)) {
+            continue;
+        }
+
+        $lines[$index] = $key . '=' . encodeEnvValue((string) $remaining[$key]);
+        unset($remaining[$key]);
+    }
+
+    foreach ($remaining as $key => $value) {
+        $lines[] = $key . '=' . encodeEnvValue((string) $value);
+    }
+
+    $content = implode("\n", $lines);
+    if ($content !== '') {
+        $content .= "\n";
+    }
+
+    $tmpFile = $envFile . '.tmp';
+    $bytes = @file_put_contents($tmpFile, $content, LOCK_EX);
+    if ($bytes === false) {
+        return false;
+    }
+
+    if (!@rename($tmpFile, $envFile)) {
+        @unlink($tmpFile);
+        return false;
+    }
+
+    return true;
+}
+
+function encodeEnvValue(string $value): string
+{
+    if ($value === '') {
+        return '""';
+    }
+
+    if (preg_match('/^[A-Za-z0-9_:\/.+\-@]+$/', $value) === 1) {
+        return $value;
+    }
+
+    $escaped = str_replace(['\\', '"', "\r", "\n"], ['\\\\', '\\"', '', '\\n'], $value);
+    return '"' . $escaped . '"';
 }
 
 function getPageHitCount(PDO $pdo, string $pageKey): int
@@ -1062,6 +1238,390 @@ function deleteWorkloadReference(PDO $pdo, int $referenceId): bool
     }
 }
 
+function normalizeSearchValue(string $value): string
+{
+    return mb_strtolower(trim($value), 'UTF-8');
+}
+
+/**
+ * @param list<string> $haystacks
+ */
+function rowMatchesSearch(array $haystacks, string $query): bool
+{
+    $needle = normalizeSearchValue($query);
+    if ($needle === '') {
+        return true;
+    }
+
+    $joined = normalizeSearchValue(implode(' ', $haystacks));
+    return str_contains($joined, $needle);
+}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ */
+function renderRequestsTableBody(array $rows, string $loadError, string $query): void
+{
+    if ($loadError !== '') {
+        echo '<tr><td colspan="6">' . e($loadError) . '</td></tr>';
+        return;
+    }
+
+    $matchedRows = [];
+    foreach ($rows as $request) {
+        $customerName = trim(((string) ($request['first_name'] ?? '')) . ' ' . ((string) ($request['last_name'] ?? '')));
+        $createdAtRaw = (string) ($request['created_at'] ?? '');
+        $preferredDateRaw = (string) ($request['preferred_date'] ?? '');
+        $createdAt = $createdAtRaw !== '' ? date('d.m.Y', strtotime($createdAtRaw)) : '-';
+        $preferredDate = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
+        $status = strtolower(trim((string) ($request['status'] ?? 'new')));
+        $statusLabelMap = [
+            'new' => 'neu',
+            'contacted' => 'kontaktiert',
+            'scheduled' => 'geplant',
+            'completed' => 'abgeschlossen',
+            'cancelled' => 'storniert',
+        ];
+        $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
+        $package = (string) (($request['cleaning_package'] ?? '') !== '' ? $request['cleaning_package'] : '-');
+
+        if (!rowMatchesSearch([$createdAt, $customerName, $package, $preferredDate, $statusLabel], $query)) {
+            continue;
+        }
+
+        $matchedRows[] = $request;
+    }
+
+    if ($matchedRows === []) {
+        $message = trim($query) === '' ? 'Noch keine Anfragen vorhanden.' : 'Keine passenden Anfragen gefunden.';
+        echo '<tr><td colspan="6">' . e($message) . '</td></tr>';
+        return;
+    }
+
+    foreach ($matchedRows as $request) {
+        $customerName = trim(((string) ($request['first_name'] ?? '')) . ' ' . ((string) ($request['last_name'] ?? '')));
+        $createdAtRaw = (string) ($request['created_at'] ?? '');
+        $preferredDateRaw = (string) ($request['preferred_date'] ?? '');
+        $createdAt = $createdAtRaw !== '' ? date('d.m.Y', strtotime($createdAtRaw)) : '-';
+        $preferredDate = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
+        $status = strtolower(trim((string) ($request['status'] ?? 'new')));
+
+        $statusLabelMap = [
+            'new' => 'neu',
+            'contacted' => 'kontaktiert',
+            'scheduled' => 'geplant',
+            'completed' => 'abgeschlossen',
+            'cancelled' => 'storniert',
+        ];
+        $statusClassMap = [
+            'new' => 'warning',
+            'contacted' => 'ok',
+            'scheduled' => 'neutral',
+            'completed' => 'ok',
+            'cancelled' => 'neutral',
+        ];
+        $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
+        $statusClass = $statusClassMap[$status] ?? 'neutral';
+
+        echo '<tr>';
+        echo '<td>' . e($createdAt) . '</td>';
+        echo '<td>' . e($customerName !== '' ? $customerName : 'Unbekannt') . '</td>';
+        echo '<td>' . e((string) (($request['cleaning_package'] ?? '') !== '' ? $request['cleaning_package'] : '-')) . '</td>';
+        echo '<td>' . e($preferredDate) . '</td>';
+        echo '<td><span class="badge ' . e($statusClass) . '">' . e($statusLabel) . '</span></td>';
+        echo '<td><a class="action-icon" href="request_detail.php?id=' . e((string) ($request['id'] ?? 0)) . '" aria-label="Anfrage im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        echo '</tr>';
+    }
+}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ */
+function renderCustomersTableBody(array $rows, string $loadError, string $query): void
+{
+    if ($loadError !== '') {
+        echo '<tr><td colspan="8">' . e($loadError) . '</td></tr>';
+        return;
+    }
+
+    $matchedRows = [];
+    foreach ($rows as $customer) {
+        $fullName = trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')));
+        $streetAddress = trim((string) ($customer['street_address'] ?? ''));
+        $postalCode = trim((string) ($customer['postal_code'] ?? ''));
+        $city = trim((string) ($customer['city'] ?? ''));
+        $customerType = trim((string) ($customer['customer_typ'] ?? ''));
+        $companyName = trim((string) ($customer['company_name'] ?? ''));
+        $addressParts = array_values(array_filter([$streetAddress, trim($postalCode . ' ' . $city)]));
+        $address = $addressParts === [] ? '-' : implode(', ', $addressParts);
+
+        if (!rowMatchesSearch([$fullName, $customerType, $companyName, (string) ($customer['email'] ?? ''), (string) ($customer['phone'] ?? ''), $address], $query)) {
+            continue;
+        }
+
+        $matchedRows[] = $customer;
+    }
+
+    if ($matchedRows === []) {
+        $message = trim($query) === '' ? 'Noch keine Kunden vorhanden.' : 'Keine passenden Kunden gefunden.';
+        echo '<tr><td colspan="8">' . e($message) . '</td></tr>';
+        return;
+    }
+
+    foreach ($matchedRows as $customer) {
+        $fullName = trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')));
+        $streetAddress = trim((string) ($customer['street_address'] ?? ''));
+        $postalCode = trim((string) ($customer['postal_code'] ?? ''));
+        $city = trim((string) ($customer['city'] ?? ''));
+        $customerType = trim((string) ($customer['customer_typ'] ?? ''));
+        $companyName = trim((string) ($customer['company_name'] ?? ''));
+        $addressParts = array_values(array_filter([$streetAddress, trim($postalCode . ' ' . $city)]));
+        $address = $addressParts === [] ? '-' : implode(', ', $addressParts);
+
+        echo '<tr>';
+        echo '<td>' . e($fullName !== '' ? $fullName : 'Unbekannt') . '</td>';
+        echo '<td>' . e($customerType !== '' ? $customerType : '-') . '</td>';
+        echo '<td>' . e($companyName !== '' ? $companyName : '-') . '</td>';
+        echo '<td>' . e((string) ($customer['email'] ?? '-')) . '</td>';
+        echo '<td>' . e((string) (($customer['phone'] ?? '') !== '' ? $customer['phone'] : '-')) . '</td>';
+        echo '<td>' . e($address) . '</td>';
+        echo '<td>' . e((string) ($customer['vehicle_count'] ?? '0')) . '</td>';
+        echo '<td><a class="action-icon" href="customer_detail.php?id=' . e((string) ($customer['id'] ?? 0)) . '" aria-label="Kunde im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        echo '</tr>';
+    }
+}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ */
+function renderVehiclesTableBody(array $rows, string $loadError, string $query): void
+{
+    if ($loadError !== '') {
+        echo '<tr><td colspan="6">' . e($loadError) . '</td></tr>';
+        return;
+    }
+
+    $matchedRows = [];
+    foreach ($rows as $vehicle) {
+        $vehicleOwner = trim(((string) ($vehicle['first_name'] ?? '')) . ' ' . ((string) ($vehicle['last_name'] ?? '')));
+        $vehicleType = trim((string) ($vehicle['vehicle_type'] ?? ''));
+        $licensePlate = trim((string) ($vehicle['license_plate'] ?? ''));
+        $brand = (string) ($vehicle['brand'] ?? '');
+        $model = (string) ($vehicle['model'] ?? '');
+
+        if (!rowMatchesSearch([$vehicleOwner, $brand, $model, $vehicleType, $licensePlate], $query)) {
+            continue;
+        }
+
+        $matchedRows[] = $vehicle;
+    }
+
+    if ($matchedRows === []) {
+        $message = trim($query) === '' ? 'Noch keine Fahrzeuge vorhanden.' : 'Keine passenden Fahrzeuge gefunden.';
+        echo '<tr><td colspan="6">' . e($message) . '</td></tr>';
+        return;
+    }
+
+    foreach ($matchedRows as $vehicle) {
+        $vehicleOwner = trim(((string) ($vehicle['first_name'] ?? '')) . ' ' . ((string) ($vehicle['last_name'] ?? '')));
+        $vehicleType = trim((string) ($vehicle['vehicle_type'] ?? ''));
+        $licensePlate = trim((string) ($vehicle['license_plate'] ?? ''));
+
+        echo '<tr>';
+        echo '<td>' . e($vehicleOwner !== '' ? $vehicleOwner : 'Unbekannt') . '</td>';
+        echo '<td>' . e((string) (($vehicle['brand'] ?? '') !== '' ? $vehicle['brand'] : '-')) . '</td>';
+        echo '<td>' . e((string) (($vehicle['model'] ?? '') !== '' ? $vehicle['model'] : '-')) . '</td>';
+        echo '<td>' . e($vehicleType !== '' ? $vehicleType : '-') . '</td>';
+        echo '<td>' . e($licensePlate !== '' ? $licensePlate : '-') . '</td>';
+        echo '<td><a class="action-icon" href="vehicle_detail.php?id=' . e((string) ($vehicle['id'] ?? 0)) . '" aria-label="Fahrzeug im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        echo '</tr>';
+    }
+}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ */
+function renderWorkloadTableBody(array $rows, string $query): void
+{
+    $matchedRows = [];
+    foreach ($rows as $workloadReference) {
+        $packageName = trim((string) ($workloadReference['cleaning_package'] ?? ''));
+        $vehicleType = trim((string) ($workloadReference['vehicle_type'] ?? ''));
+        $timeEffortValue = (float) ($workloadReference['time_effort'] ?? 0);
+        $netPriceValue = (float) ($workloadReference['net_price'] ?? 0);
+        $timeLabel = number_format($timeEffortValue, 2, ',', '.') . ' h';
+        $priceLabel = number_format($netPriceValue, 2, ',', '.') . ' EUR';
+
+        if (!rowMatchesSearch([$packageName, $vehicleType, $timeLabel, $priceLabel], $query)) {
+            continue;
+        }
+
+        $matchedRows[] = $workloadReference;
+    }
+
+    if ($matchedRows === []) {
+        $message = trim($query) === '' ? 'Noch keine Arbeits- und Kosten-Aufwände vorhanden.' : 'Keine passenden Arbeits- und Kosten-Aufwände gefunden.';
+        echo '<tr><td colspan="5">' . e($message) . '</td></tr>';
+        return;
+    }
+
+    foreach ($matchedRows as $workloadReference) {
+        $referenceId = (int) ($workloadReference['id'] ?? 0);
+        $packageName = trim((string) ($workloadReference['cleaning_package'] ?? ''));
+        $vehicleType = trim((string) ($workloadReference['vehicle_type'] ?? ''));
+        $timeEffortValue = (float) ($workloadReference['time_effort'] ?? 0);
+        $netPriceValue = (float) ($workloadReference['net_price'] ?? 0);
+
+        echo '<tr>';
+        echo '<td>' . e($packageName !== '' ? $packageName : '-') . '</td>';
+        echo '<td>' . e($vehicleType !== '' ? $vehicleType : '-') . '</td>';
+        echo '<td>' . e(number_format($timeEffortValue, 2, ',', '.')) . ' h</td>';
+        echo '<td>' . e(number_format($netPriceValue, 2, ',', '.')) . ' EUR</td>';
+        echo '<td><a class="action-icon" href="workload_reference_detail.php?id=' . e((string) $referenceId) . '" aria-label="Aufwandseintrag im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        echo '</tr>';
+    }
+}
+
+/**
+ * @param list<array<string, mixed>> $rows
+ */
+function renderAppointmentsTableBody(array $rows, string $loadError, string $query): void
+{
+    if ($loadError !== '') {
+        echo '<tr><td colspan="7">' . e($loadError) . '</td></tr>';
+        return;
+    }
+
+    $matchedRows = [];
+    foreach ($rows as $appointment) {
+        $customerName = trim(((string) ($appointment['first_name'] ?? '')) . ' ' . ((string) ($appointment['last_name'] ?? '')));
+        $vehicleLabel = trim(((string) ($appointment['brand'] ?? '')) . ' ' . ((string) ($appointment['model'] ?? '')));
+        $vehicleType = trim((string) ($appointment['vehicle_type'] ?? ''));
+        $preferredDateRaw = trim((string) ($appointment['preferred_date'] ?? ''));
+        $preferredTimeRaw = trim((string) ($appointment['preferred_time'] ?? ''));
+        $timeEffortRaw = $appointment['time_effort'] ?? null;
+
+        $datePart = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
+        $appointmentDateTime = $datePart;
+        if ($preferredTimeRaw !== '' && $datePart !== '-') {
+            $appointmentDateTime .= ' ' . $preferredTimeRaw;
+        }
+
+        $timeEffortLabel = '-';
+        if ($timeEffortRaw !== null && $timeEffortRaw !== '') {
+            $timeEffortLabel = number_format((float) $timeEffortRaw, 2, ',', '.') . ' h';
+        }
+
+        $status = strtolower(trim((string) ($appointment['status'] ?? 'new')));
+        $statusLabelMap = [
+            'new' => 'neu',
+            'contacted' => 'kontaktiert',
+            'scheduled' => 'geplant',
+            'completed' => 'abgeschlossen',
+            'cancelled' => 'storniert',
+        ];
+        $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
+        $package = (string) (($appointment['cleaning_package'] ?? '') !== '' ? $appointment['cleaning_package'] : '-');
+
+        if (!rowMatchesSearch([$appointmentDateTime, $customerName, $vehicleLabel, $vehicleType, $package, $timeEffortLabel, $statusLabel], $query)) {
+            continue;
+        }
+
+        $matchedRows[] = $appointment;
+    }
+
+    if ($matchedRows === []) {
+        $message = trim($query) === '' ? 'Noch keine Termine vorhanden.' : 'Keine passenden Termine gefunden.';
+        echo '<tr><td colspan="7">' . e($message) . '</td></tr>';
+        return;
+    }
+
+    foreach ($matchedRows as $appointment) {
+        $customerName = trim(((string) ($appointment['first_name'] ?? '')) . ' ' . ((string) ($appointment['last_name'] ?? '')));
+        $vehicleLabel = trim(((string) ($appointment['brand'] ?? '')) . ' ' . ((string) ($appointment['model'] ?? '')));
+        $vehicleType = trim((string) ($appointment['vehicle_type'] ?? ''));
+        $preferredDateRaw = trim((string) ($appointment['preferred_date'] ?? ''));
+        $preferredTimeRaw = trim((string) ($appointment['preferred_time'] ?? ''));
+        $timeEffortRaw = $appointment['time_effort'] ?? null;
+
+        $datePart = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
+        $appointmentDateTime = $datePart;
+        if ($preferredTimeRaw !== '' && $datePart !== '-') {
+            $appointmentDateTime .= ' ' . $preferredTimeRaw;
+        }
+
+        $timeEffortLabel = '-';
+        if ($timeEffortRaw !== null && $timeEffortRaw !== '') {
+            $timeEffortLabel = number_format((float) $timeEffortRaw, 2, ',', '.') . ' h';
+        }
+
+        $status = strtolower(trim((string) ($appointment['status'] ?? 'new')));
+        $statusLabelMap = [
+            'new' => 'neu',
+            'contacted' => 'kontaktiert',
+            'scheduled' => 'geplant',
+            'completed' => 'abgeschlossen',
+            'cancelled' => 'storniert',
+        ];
+        $statusClassMap = [
+            'new' => 'warning',
+            'contacted' => 'ok',
+            'scheduled' => 'neutral',
+            'completed' => 'ok',
+            'cancelled' => 'neutral',
+        ];
+        $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
+        $statusClass = $statusClassMap[$status] ?? 'neutral';
+
+        echo '<tr>';
+        echo '<td>' . e($appointmentDateTime) . '</td>';
+        echo '<td>' . e($customerName !== '' ? $customerName : 'Unbekannt') . '</td>';
+        echo '<td>' . e($vehicleLabel !== '' ? $vehicleLabel . ($vehicleType !== '' ? ' (' . $vehicleType . ')' : '') : '-') . '</td>';
+        echo '<td>' . e((string) (($appointment['cleaning_package'] ?? '') !== '' ? $appointment['cleaning_package'] : '-')) . '</td>';
+        echo '<td>' . e($timeEffortLabel) . '</td>';
+        echo '<td><span class="badge ' . e($statusClass) . '">' . e($statusLabel) . '</span></td>';
+        echo '<td><a class="action-icon" href="appointment_detail.php?id=' . e((string) ($appointment['id'] ?? 0)) . '" aria-label="Termin im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        echo '</tr>';
+    }
+}
+
+$ajaxAction = (string) ($_GET['ajax'] ?? '');
+if ($isAuthenticated && $ajaxAction === 'list_search') {
+    $panel = trim((string) ($_GET['panel'] ?? ''));
+    $query = trim((string) ($_GET['q'] ?? ''));
+
+    header('Content-Type: text/html; charset=UTF-8');
+
+    if ($panel === 'requests') {
+        renderRequestsTableBody($requestRows, $requestLoadError, $query);
+        exit;
+    }
+
+    if ($panel === 'customers') {
+        renderCustomersTableBody($customerRows, $customerLoadError, $query);
+        exit;
+    }
+
+    if ($panel === 'vehicles') {
+        renderVehiclesTableBody($vehicleRows, $vehicleLoadError, $query);
+        exit;
+    }
+
+    if ($panel === 'workload') {
+        renderWorkloadTableBody($workloadReferenceRows, $query);
+        exit;
+    }
+
+    if ($panel === 'appointments') {
+        renderAppointmentsTableBody($appointmentRows, $appointmentLoadError, $query);
+        exit;
+    }
+
+    http_response_code(400);
+    echo e('Ungültige Listenansicht.');
+    exit;
+}
+
 if (!$isAuthenticated):
 ?>
 <!doctype html>
@@ -1170,6 +1730,7 @@ endif;
                 <button class="menu-item is-subitem" type="button" data-view="settings_password"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>Passwort Verwaltung</span></button>
                 <button class="menu-item is-subitem" type="button" data-view="settings_vehicle_types"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>Fahrzeugtypen</span></button>
                 <button class="menu-item is-subitem" type="button" data-view="settings_cleaning_packages"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>Reinigungspakete</span></button>
+                <button class="menu-item is-subitem" type="button" data-view="settings_email_templates"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>E-Mail-Vorlagen</span></button>
                 <button class="menu-item is-subitem" type="button" data-view="workload"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>Aufwände</span></button>
             </div>
         </nav>
@@ -1219,8 +1780,18 @@ endif;
         </section>
 
         <section class="panel is-hidden" data-view-panel="requests">
-            <div class="panel-actions">
-                <a class="primary-link" href="request_detail.php">+ Neu</a>
+            <div class="panel-actions panel-actions-with-search" data-list-search-toolbar="requests">
+                <input
+                    type="search"
+                    class="list-search-input"
+                    placeholder="Anfragen durchsuchen..."
+                    data-list-search-input="requests"
+                    data-list-search-target="requests-table-body"
+                    data-list-search-endpoint="verwaltung.php?ajax=list_search&amp;panel=requests"
+                >
+                <div class="panel-actions-right">
+                    <a class="primary-link" href="request_detail.php">+ Neu</a>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
@@ -1234,73 +1805,32 @@ endif;
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody>
-                    <?php if ($requestLoadError !== ''): ?>
-                        <tr>
-                            <td colspan="6"><?= e($requestLoadError) ?></td>
-                        </tr>
-                    <?php elseif ($requestRows === []): ?>
-                        <tr>
-                            <td colspan="6">Noch keine Anfragen vorhanden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($requestRows as $request): ?>
-                            <?php
-                            $customerName = trim(((string) ($request['first_name'] ?? '')) . ' ' . ((string) ($request['last_name'] ?? '')));
-                            $createdAtRaw = (string) ($request['created_at'] ?? '');
-                            $preferredDateRaw = (string) ($request['preferred_date'] ?? '');
-                            $createdAt = $createdAtRaw !== '' ? date('d.m.Y', strtotime($createdAtRaw)) : '-';
-                            $preferredDate = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
-                            $status = strtolower(trim((string) ($request['status'] ?? 'new')));
-
-                            $statusLabelMap = [
-                                'new' => 'neu',
-                                'contacted' => 'kontaktiert',
-                                'scheduled' => 'geplant',
-                                'completed' => 'abgeschlossen',
-                                'cancelled' => 'storniert',
-                            ];
-                            $statusClassMap = [
-                                'new' => 'warning',
-                                'contacted' => 'ok',
-                                'scheduled' => 'neutral',
-                                'completed' => 'ok',
-                                'cancelled' => 'neutral',
-                            ];
-                            $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
-                            $statusClass = $statusClassMap[$status] ?? 'neutral';
-                            ?>
-                            <tr>
-                                <td><?= e($createdAt) ?></td>
-                                <td><?= e($customerName !== '' ? $customerName : 'Unbekannt') ?></td>
-                                <td><?= e((string) (($request['cleaning_package'] ?? '') !== '' ? $request['cleaning_package'] : '-')) ?></td>
-                                <td><?= e($preferredDate) ?></td>
-                                <td><span class="badge <?= e($statusClass) ?>"><?= e($statusLabel) ?></span></td>
-                                <td>
-                                    <a
-                                        class="action-icon"
-                                        href="request_detail.php?id=<?= e((string) ($request['id'] ?? 0)) ?>"
-                                        aria-label="Anfrage im Detail anzeigen"
-                                        title="Details anzeigen"
-                                    >&#128269;</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                    </tbody>
+                    <tbody id="requests-table-body"><?php renderRequestsTableBody($requestRows, $requestLoadError, ''); ?></tbody>
                 </table>
             </div>
         </section>
 
         <section class="panel is-hidden" data-view-panel="customers">
-            <div class="panel-actions">
-                <a class="primary-link" href="customer_create.php">+ Neu</a>
+            <div class="panel-actions panel-actions-with-search" data-list-search-toolbar="customers">
+                <input
+                    type="search"
+                    class="list-search-input"
+                    placeholder="Kunden durchsuchen..."
+                    data-list-search-input="customers"
+                    data-list-search-target="customers-table-body"
+                    data-list-search-endpoint="verwaltung.php?ajax=list_search&amp;panel=customers"
+                >
+                <div class="panel-actions-right">
+                    <a class="primary-link" href="customer_create.php">+ Neu</a>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
                     <thead>
                     <tr>
                         <th>Kunde</th>
+                        <th>Typ</th>
+                        <th>Firma</th>
                         <th>E-Mail</th>
                         <th>Telefon</th>
                         <th>Adresse</th>
@@ -1308,51 +1838,24 @@ endif;
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody>
-                    <?php if ($customerLoadError !== ''): ?>
-                        <tr>
-                            <td colspan="6"><?= e($customerLoadError) ?></td>
-                        </tr>
-                    <?php elseif ($customerRows === []): ?>
-                        <tr>
-                            <td colspan="6">Noch keine Kunden vorhanden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($customerRows as $customer): ?>
-                            <?php
-                            $fullName = trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')));
-                            $streetAddress = trim((string) ($customer['street_address'] ?? ''));
-                            $postalCode = trim((string) ($customer['postal_code'] ?? ''));
-                            $city = trim((string) ($customer['city'] ?? ''));
-
-                            $addressParts = array_values(array_filter([$streetAddress, trim($postalCode . ' ' . $city)]));
-                            $address = $addressParts === [] ? '-' : implode(', ', $addressParts);
-                            ?>
-                            <tr>
-                                <td><?= e($fullName !== '' ? $fullName : 'Unbekannt') ?></td>
-                                <td><?= e((string) ($customer['email'] ?? '-')) ?></td>
-                                <td><?= e((string) (($customer['phone'] ?? '') !== '' ? $customer['phone'] : '-')) ?></td>
-                                <td><?= e($address) ?></td>
-                                <td><?= e((string) ($customer['vehicle_count'] ?? '0')) ?></td>
-                                <td>
-                                    <a
-                                        class="action-icon"
-                                        href="customer_detail.php?id=<?= e((string) ($customer['id'] ?? 0)) ?>"
-                                        aria-label="Kunde im Detail anzeigen"
-                                        title="Details anzeigen"
-                                    >&#128269;</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                    </tbody>
+                    <tbody id="customers-table-body"><?php renderCustomersTableBody($customerRows, $customerLoadError, ''); ?></tbody>
                 </table>
             </div>
         </section>
 
         <section class="panel is-hidden" data-view-panel="vehicles">
-            <div class="panel-actions">
-                <a class="primary-link" href="vehicle_detail.php">+ Neu</a>
+            <div class="panel-actions panel-actions-with-search" data-list-search-toolbar="vehicles">
+                <input
+                    type="search"
+                    class="list-search-input"
+                    placeholder="Fahrzeuge durchsuchen..."
+                    data-list-search-input="vehicles"
+                    data-list-search-target="vehicles-table-body"
+                    data-list-search-endpoint="verwaltung.php?ajax=list_search&amp;panel=vehicles"
+                >
+                <div class="panel-actions-right">
+                    <a class="primary-link" href="vehicle_detail.php">+ Neu</a>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
@@ -1366,47 +1869,24 @@ endif;
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody>
-                    <?php if ($vehicleLoadError !== ''): ?>
-                        <tr>
-                            <td colspan="6"><?= e($vehicleLoadError) ?></td>
-                        </tr>
-                    <?php elseif ($vehicleRows === []): ?>
-                        <tr>
-                            <td colspan="6">Noch keine Fahrzeuge vorhanden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($vehicleRows as $vehicle): ?>
-                            <?php
-                            $vehicleOwner = trim(((string) ($vehicle['first_name'] ?? '')) . ' ' . ((string) ($vehicle['last_name'] ?? '')));
-                            $vehicleType = trim((string) ($vehicle['vehicle_type'] ?? ''));
-                            $licensePlate = trim((string) ($vehicle['license_plate'] ?? ''));
-                            ?>
-                            <tr>
-                                <td><?= e($vehicleOwner !== '' ? $vehicleOwner : 'Unbekannt') ?></td>
-                                <td><?= e((string) (($vehicle['brand'] ?? '') !== '' ? $vehicle['brand'] : '-')) ?></td>
-                                <td><?= e((string) (($vehicle['model'] ?? '') !== '' ? $vehicle['model'] : '-')) ?></td>
-                                <td><?= e($vehicleType !== '' ? $vehicleType : '-') ?></td>
-                                <td><?= e($licensePlate !== '' ? $licensePlate : '-') ?></td>
-                                <td>
-                                    <a
-                                        class="action-icon"
-                                        href="vehicle_detail.php?id=<?= e((string) ($vehicle['id'] ?? 0)) ?>"
-                                        aria-label="Fahrzeug im Detail anzeigen"
-                                        title="Details anzeigen"
-                                    >&#128269;</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                    </tbody>
+                    <tbody id="vehicles-table-body"><?php renderVehiclesTableBody($vehicleRows, $vehicleLoadError, ''); ?></tbody>
                 </table>
             </div>
         </section>
 
         <section class="panel is-hidden" data-view-panel="workload">
-            <div class="panel-actions">
-                <a class="primary-link" href="workload_reference_detail.php?create=1">+ Neu</a>
+            <div class="panel-actions panel-actions-with-search" data-list-search-toolbar="workload">
+                <input
+                    type="search"
+                    class="list-search-input"
+                    placeholder="Aufwände durchsuchen..."
+                    data-list-search-input="workload"
+                    data-list-search-target="workload-table-body"
+                    data-list-search-endpoint="verwaltung.php?ajax=list_search&amp;panel=workload"
+                >
+                <div class="panel-actions-right">
+                    <a class="primary-link" href="workload_reference_detail.php?create=1">+ Neu</a>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
@@ -1419,45 +1899,25 @@ endif;
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody>
-                    <?php if ($workloadReferenceRows === []): ?>
-                        <tr>
-                            <td colspan="5">Noch keine Arbeits- und Kosten-Aufwände vorhanden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($workloadReferenceRows as $workloadReference): ?>
-                            <?php
-                            $referenceId = (int) ($workloadReference['id'] ?? 0);
-                            $packageName = trim((string) ($workloadReference['cleaning_package'] ?? ''));
-                            $vehicleType = trim((string) ($workloadReference['vehicle_type'] ?? ''));
-                            $timeEffortValue = (float) ($workloadReference['time_effort'] ?? 0);
-                            $netPriceValue = (float) ($workloadReference['net_price'] ?? 0);
-                            ?>
-                            <tr>
-                                <td><?= e($packageName !== '' ? $packageName : '-') ?></td>
-                                <td><?= e($vehicleType !== '' ? $vehicleType : '-') ?></td>
-                                <td><?= e(number_format($timeEffortValue, 2, ',', '.')) ?> h</td>
-                                <td><?= e(number_format($netPriceValue, 2, ',', '.')) ?> EUR</td>
-                                <td>
-                                    <a
-                                        class="action-icon"
-                                        href="workload_reference_detail.php?id=<?= e((string) $referenceId) ?>"
-                                        aria-label="Aufwandseintrag im Detail anzeigen"
-                                        title="Details anzeigen"
-                                    >&#128269;</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                    </tbody>
+                    <tbody id="workload-table-body"><?php renderWorkloadTableBody($workloadReferenceRows, ''); ?></tbody>
                 </table>
             </div>
         </section>
 
         <section class="panel is-hidden" data-view-panel="appointments">
-            <div class="panel-actions">
-                <a class="primary-link ical-download-link" href="verwaltung.php?view=appointments&amp;download=appointments_ical">iCal Download</a>
-                <a class="primary-link" href="appointment_detail.php?create=1">+ Neu</a>
+            <div class="panel-actions panel-actions-with-search" data-list-search-toolbar="appointments">
+                <input
+                    type="search"
+                    class="list-search-input"
+                    placeholder="Termine durchsuchen..."
+                    data-list-search-input="appointments"
+                    data-list-search-target="appointments-table-body"
+                    data-list-search-endpoint="verwaltung.php?ajax=list_search&amp;panel=appointments"
+                >
+                <div class="panel-actions-right">
+                    <a class="primary-link ical-download-link" href="verwaltung.php?view=appointments&amp;download=appointments_ical">iCal Download</a>
+                    <a class="primary-link" href="appointment_detail.php?create=1">+ Neu</a>
+                </div>
             </div>
             <div class="table-wrap">
                 <table>
@@ -1467,70 +1927,12 @@ endif;
                         <th>Kunde</th>
                         <th>Fahrzeug</th>
                         <th>Paket</th>
+                        <th>Zeitaufwand</th>
                         <th>Status</th>
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody>
-                    <?php if ($appointmentLoadError !== ''): ?>
-                        <tr>
-                            <td colspan="6"><?= e($appointmentLoadError) ?></td>
-                        </tr>
-                    <?php elseif ($appointmentRows === []): ?>
-                        <tr>
-                            <td colspan="6">Noch keine Termine vorhanden.</td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($appointmentRows as $appointment): ?>
-                            <?php
-                            $customerName = trim(((string) ($appointment['first_name'] ?? '')) . ' ' . ((string) ($appointment['last_name'] ?? '')));
-                            $vehicleLabel = trim(((string) ($appointment['brand'] ?? '')) . ' ' . ((string) ($appointment['model'] ?? '')));
-                            $vehicleType = trim((string) ($appointment['vehicle_type'] ?? ''));
-                            $preferredDateRaw = trim((string) ($appointment['preferred_date'] ?? ''));
-                            $preferredTimeRaw = trim((string) ($appointment['preferred_time'] ?? ''));
-
-                            $datePart = $preferredDateRaw !== '' ? date('d.m.Y', strtotime($preferredDateRaw)) : '-';
-                            $appointmentDateTime = $datePart;
-                            if ($preferredTimeRaw !== '' && $datePart !== '-') {
-                                $appointmentDateTime .= ' ' . $preferredTimeRaw;
-                            }
-
-                            $status = strtolower(trim((string) ($appointment['status'] ?? 'new')));
-                            $statusLabelMap = [
-                                'new' => 'neu',
-                                'contacted' => 'kontaktiert',
-                                'scheduled' => 'geplant',
-                                'completed' => 'abgeschlossen',
-                                'cancelled' => 'storniert',
-                            ];
-                            $statusClassMap = [
-                                'new' => 'warning',
-                                'contacted' => 'ok',
-                                'scheduled' => 'neutral',
-                                'completed' => 'ok',
-                                'cancelled' => 'neutral',
-                            ];
-                            $statusLabel = $statusLabelMap[$status] ?? ($status !== '' ? $status : 'neu');
-                            $statusClass = $statusClassMap[$status] ?? 'neutral';
-                            ?>
-                            <tr>
-                                <td><?= e($appointmentDateTime) ?></td>
-                                <td><?= e($customerName !== '' ? $customerName : 'Unbekannt') ?></td>
-                                <td><?= e($vehicleLabel !== '' ? $vehicleLabel . ($vehicleType !== '' ? ' (' . $vehicleType . ')' : '') : '-') ?></td>
-                                <td><?= e((string) (($appointment['cleaning_package'] ?? '') !== '' ? $appointment['cleaning_package'] : '-')) ?></td>
-                                <td><span class="badge <?= e($statusClass) ?>"><?= e($statusLabel) ?></span></td>
-                                <td>
-                                    <a
-                                        class="action-icon"
-                                        href="appointment_detail.php?id=<?= e((string) ($appointment['id'] ?? 0)) ?>"
-                                        aria-label="Termin im Detail anzeigen"
-                                        title="Details anzeigen"
-                                    >&#128269;</a>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                    </tbody>
+                    <tbody id="appointments-table-body"><?php renderAppointmentsTableBody($appointmentRows, $appointmentLoadError, ''); ?></tbody>
                 </table>
             </div>
         </section>
@@ -1539,7 +1941,7 @@ endif;
             <div class="settings-grid">
                 <article class="password-box settings-single">
                     <h2>Social Media & Kontakt</h2>
-                    <p>WhatsApp-Nummer, Kontakt-E-Mail sowie Facebook- und Instagram-Links für Website und Kontaktformular bearbeiten.</p>
+                    <p>WhatsApp-Nummer, Kontakt-E-Mail, Betriebsadresse sowie Facebook- und Instagram-Links für Website und Kontaktformular bearbeiten.</p>
 
                     <?php if ($settingsNotice !== '' && $initialView === 'settings_social'): ?>
                         <p class="form-notice"><?= e($settingsNotice) ?></p>
@@ -1587,6 +1989,15 @@ endif;
                             value="<?= e((string) ($socialMediaSettings['contact_email'] ?? '')) ?>"
                             placeholder="kontakt@beispiel.de"
                             required
+                        >
+
+                        <label for="business_address">Betriebsadresse</label>
+                        <input
+                            id="business_address"
+                            type="text"
+                            name="business_address"
+                            placeholder="z. B. Musterstraße 1, 12345 Musterstadt"
+                            value="<?= e((string) ($socialMediaSettings['business_address'] ?? '')) ?>"
                         >
 
                         <button type="submit">Kontaktdaten speichern</button>
@@ -1778,6 +2189,138 @@ endif;
             </div>
         </section>
 
+        <section class="panel is-hidden" data-view-panel="settings_email_templates">
+            <div class="settings-grid">
+                <article class="password-box settings-single">
+                    <h2>E-Mail-Vorlagen</h2>
+                    <p>Vorlagen fuer Betreff und Inhalt pflegen. Platzhalter werden beim Versand ersetzt.</p>
+
+                    <?php if ($settingsNotice !== '' && $initialView === 'settings_email_templates'): ?>
+                        <p class="form-notice"><?= e($settingsNotice) ?></p>
+                    <?php endif; ?>
+                    <?php if ($settingsError !== '' && $initialView === 'settings_email_templates'): ?>
+                        <p class="form-error"><?= e($settingsError) ?></p>
+                    <?php endif; ?>
+
+                    <form method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form">
+                        <input type="hidden" name="auth_action" value="save_email_template">
+                        <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                        <input type="hidden" name="template_id" value="0">
+
+                        <label for="new_template_name">Neue Vorlage: Name</label>
+                        <input id="new_template_name" type="text" name="template_name" placeholder="z. B. Standard Rueckmeldung" required>
+
+                        <label for="new_subject_template">Neue Vorlage: Betreff</label>
+                        <input id="new_subject_template" type="text" name="subject_template" placeholder="z. B. Danke fuer deine Anfrage" required>
+
+                        <label for="new_body_template">Neue Vorlage: Inhalt</label>
+                        <textarea id="new_body_template" name="body_template" rows="7" placeholder="Text mit Platzhaltern wie {{customer.first_name}}" required></textarea>
+
+                        <button type="submit">Neue Vorlage speichern</button>
+                    </form>
+
+                    <div class="settings-inline-note">
+                        Verfuegbare Platzhalter:
+                        <?php foreach ($allowedEmailPlaceholders as $placeholder): ?>
+                            <code>{{<?= e($placeholder) ?>}}</code>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <div class="table-wrap" style="margin-top:0.9rem;">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Betreff</th>
+                                <th>Inhalt</th>
+                                <th>Aktion</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <?php if ($emailTemplateRows === []): ?>
+                                <tr>
+                                    <td colspan="4">Keine E-Mail-Vorlagen vorhanden.</td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($emailTemplateRows as $emailTemplateRow): ?>
+                                    <?php
+                                    $templateId = max(0, (int) ($emailTemplateRow['id'] ?? 0));
+                                    $templateName = trim((string) ($emailTemplateRow['template_name'] ?? ''));
+                                    $subjectTemplate = (string) ($emailTemplateRow['subject_template'] ?? '');
+                                    $bodyTemplate = (string) ($emailTemplateRow['body_template'] ?? '');
+                                    ?>
+                                    <tr>
+                                        <td colspan="4">
+                                            <form method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form">
+                                                <input type="hidden" name="auth_action" value="save_email_template">
+                                                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                                                <input type="hidden" name="template_id" value="<?= e((string) $templateId) ?>">
+
+                                                <label for="template_name_<?= e((string) $templateId) ?>">Name</label>
+                                                <input id="template_name_<?= e((string) $templateId) ?>" type="text" name="template_name" value="<?= e($templateName) ?>" required>
+
+                                                <label for="subject_template_<?= e((string) $templateId) ?>">Betreff</label>
+                                                <input id="subject_template_<?= e((string) $templateId) ?>" type="text" name="subject_template" value="<?= e($subjectTemplate) ?>" required>
+
+                                                <label for="body_template_<?= e((string) $templateId) ?>">Inhalt</label>
+                                                <textarea id="body_template_<?= e((string) $templateId) ?>" name="body_template" rows="7" required><?= e($bodyTemplate) ?></textarea>
+
+                                                <button type="submit">Vorlage aktualisieren</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="table-wrap" style="margin-top:0.9rem;">
+                        <table>
+                            <thead>
+                            <tr>
+                                <th>E-Mail-Typ</th>
+                                <th>Zuordnung</th>
+                                <th>Aktion</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($emailTypeLabels as $emailTypeKey => $emailTypeLabel): ?>
+                                <?php $selectedTemplateId = max(0, (int) ($emailTypeAssignments[$emailTypeKey] ?? 0)); ?>
+                                <tr>
+                                    <td><?= e($emailTypeLabel) ?></td>
+                                    <td>
+                                        <form method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form settings-form-inline">
+                                            <input type="hidden" name="auth_action" value="assign_email_template">
+                                            <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                                            <input type="hidden" name="email_type_key" value="<?= e($emailTypeKey) ?>">
+
+                                            <select name="template_id" required>
+                                                <option value="">Bitte waehlen</option>
+                                                <?php foreach ($emailTemplateRows as $emailTemplateRow): ?>
+                                                    <?php
+                                                    $templateOptionId = max(0, (int) ($emailTemplateRow['id'] ?? 0));
+                                                    $templateOptionName = trim((string) ($emailTemplateRow['template_name'] ?? ''));
+                                                    ?>
+                                                    <option value="<?= e((string) $templateOptionId) ?>" <?= $templateOptionId === $selectedTemplateId ? 'selected' : '' ?>>
+                                                        <?= e($templateOptionName !== '' ? $templateOptionName : ('Vorlage #' . $templateOptionId)) ?>
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+
+                                            <button type="submit">Zuordnung speichern</button>
+                                        </form>
+                                    </td>
+                                    <td><?= e($emailTypeKey) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </div>
+        </section>
+
         <section class="panel is-hidden" data-view-panel="settings_workload_reference">
             <div class="settings-grid">
                 <article class="password-box settings-single">
@@ -1877,6 +2420,7 @@ endif;
         settings_password: ['Einstellungen: Passwort', 'Passwort für den Verwaltungsbereich ändern.'],
         settings_vehicle_types: ['Einstellungen: Fahrzeugtypen', 'Fahrzeugtypen für Kunden- und Fahrzeugformulare pflegen.'],
         settings_cleaning_packages: ['Einstellungen: Reinigungspakete', 'Reinigungspakete für Kontaktformular sowie Anfrage- und Terminformulare pflegen.'],
+        settings_email_templates: ['Einstellungen: E-Mail-Vorlagen', 'Betreff/Inhalt pflegen und E-Mail-Typen den Vorlagen zuordnen.'],
         settings_workload_reference: ['Einstellungen: Workload Referenz', 'Zeitaufwand und Nettopreis pro Reinigungspaket und Fahrzeugtyp pflegen.'],
     };
 
@@ -1892,7 +2436,7 @@ endif;
     function activate(view) {
         menuItems.forEach((item) => item.classList.toggle('is-active', item.dataset.view === view));
         panels.forEach((panel) => panel.classList.toggle('is-hidden', panel.dataset.viewPanel !== view));
-        setSettingsDropdown(view === 'settings_social' || view === 'settings_password' || view === 'settings_vehicle_types' || view === 'settings_cleaning_packages' || view === 'settings_workload_reference' || view === 'workload');
+        setSettingsDropdown(view === 'settings_social' || view === 'settings_password' || view === 'settings_vehicle_types' || view === 'settings_cleaning_packages' || view === 'settings_email_templates' || view === 'settings_workload_reference' || view === 'workload');
 
         const hideHeaderInView = view === 'dashboard';
         if (contentHead) {
@@ -1964,6 +2508,95 @@ endif;
     }
 
     activate(initialView);
+})();
+
+(() => {
+    const searchInputs = Array.from(document.querySelectorAll('[data-list-search-input]'));
+    if (searchInputs.length === 0) {
+        return;
+    }
+
+    const debounceMs = 280;
+    const debounceTimers = new Map();
+    const activeControllers = new Map();
+
+    const rebindDynamicHandlers = (_panel) => {
+        // Keep this hook for interactive elements inside dynamically reloaded table bodies.
+    };
+
+    const updateListBody = async (input) => {
+        const panel = (input.dataset.listSearchInput || '').trim();
+        const targetId = (input.dataset.listSearchTarget || '').trim();
+        const endpoint = (input.dataset.listSearchEndpoint || '').trim();
+        const query = (input.value || '').trim();
+        const target = document.getElementById(targetId);
+
+        if (!panel || !target || !endpoint) {
+            return;
+        }
+
+        const previousController = activeControllers.get(panel);
+        if (previousController) {
+            previousController.abort();
+        }
+
+        const controller = new AbortController();
+        activeControllers.set(panel, controller);
+
+        input.setAttribute('aria-busy', 'true');
+
+        try {
+            const url = new URL(endpoint, window.location.origin);
+            url.searchParams.set('q', query);
+            url.searchParams.set('view', panel);
+
+            const response = await fetch(url.toString(), {
+                credentials: 'same-origin',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                throw new Error(`List search failed for ${panel}`);
+            }
+
+            const html = await response.text();
+            target.innerHTML = html;
+            rebindDynamicHandlers(panel);
+        } catch (error) {
+            if (controller.signal.aborted) {
+                return;
+            }
+
+            console.error(error);
+        } finally {
+            if (activeControllers.get(panel) === controller) {
+                activeControllers.delete(panel);
+            }
+            input.removeAttribute('aria-busy');
+        }
+    };
+
+    searchInputs.forEach((input) => {
+        input.addEventListener('input', () => {
+            const panel = (input.dataset.listSearchInput || '').trim();
+            if (panel === '') {
+                return;
+            }
+
+            const previousTimer = debounceTimers.get(panel);
+            if (typeof previousTimer === 'number') {
+                window.clearTimeout(previousTimer);
+            }
+
+            const timerId = window.setTimeout(() => {
+                updateListBody(input);
+            }, debounceMs);
+            debounceTimers.set(panel, timerId);
+        });
+    });
 })();
 </script>
 </body>

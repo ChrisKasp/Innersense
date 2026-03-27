@@ -18,11 +18,11 @@ $instagramHref = $instagramHref ?? '#';
         </div>
 
         <nav class="footer-links" aria-label="Rechtliches">
-            <a href="#">Impressum</a>
-            <a href="#">Datenschutz</a>
+            <a href="impressum.php">Impressum</a>
+            <a href="datenschutz.php">Datenschutz</a>
             <a href="#">Cookie-Einstellungen</a>
             <a href="#">Widerrufsbelehrung</a>
-            <a href="#">AGB</a>
+            <a href="agb.php">AGB</a>
         </nav>
     </div>
 </footer>

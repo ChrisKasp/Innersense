@@ -17,6 +17,26 @@ $customerOptions = [];
 $vehicleOptions = [];
 $cleaningPackageOptions = [];
 $workloadReferenceMap = [];
+$vehicleTypeOptions = [];
+$newCustomerErrors = [];
+$newCustomerFormData = [
+    'first_name' => '',
+    'last_name' => '',
+    'email' => '',
+    'phone' => '',
+    'customer_typ' => 'Privatperson',
+    'company_name' => '',
+    'street_address' => '',
+    'postal_code' => '',
+    'city' => '',
+    'vehicle_brand' => '',
+    'vehicle_model' => '',
+    'vehicle_type' => '',
+    'vehicle_license_plate' => '',
+];
+$openCreateCustomerModal = false;
+$prefillCustomerId = 0;
+$prefillVehicleId = 0;
 $recordDeleted = false;
 
 if (isset($_GET['created']) && $_GET['created'] === '1') {
@@ -74,6 +94,50 @@ function detectFirstExistingTable(PDO $pdo, array $tableNames): ?string
     }
 
     return null;
+}
+
+/**
+ * @return list<string>
+ */
+function loadVehicleTypeOptions(PDO $pdo): array
+{
+    $fallback = ['Kleinwagen', 'Limousine', 'SUV', 'Kombi', 'Van'];
+
+    try {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS vehicle_type_option (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                type_name VARCHAR(120) NOT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_vehicle_type_option_name (type_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+        );
+
+        $stmt = $pdo->query(
+            'SELECT type_name
+             FROM vehicle_type_option
+             WHERE is_active = 1
+             ORDER BY sort_order ASC, type_name ASC'
+        );
+        $rows = $stmt->fetchAll();
+        $options = [];
+
+        if (is_array($rows)) {
+            foreach ($rows as $row) {
+                $name = trim((string) ($row['type_name'] ?? ''));
+                if ($name !== '') {
+                    $options[] = $name;
+                }
+            }
+        }
+
+        return $options !== [] ? $options : $fallback;
+    } catch (Throwable $exception) {
+        return $fallback;
+    }
 }
 
 /**
@@ -183,6 +247,7 @@ $requestTable = detectFirstExistingTable($pdo, ['customer_requests', 'customer_r
 $vehicleTable = detectFirstExistingTable($pdo, ['customer_vehicles', 'customer_vehicle']);
 $cleaningPackageOptions = loadCleaningPackageOptions($pdo);
 $workloadReferenceMap = loadWorkloadReferenceMap($pdo);
+$vehicleTypeOptions = loadVehicleTypeOptions($pdo);
 
 if ($requestTable === null) {
     $detailError = 'Anfragetabelle wurde nicht gefunden.';
@@ -218,6 +283,170 @@ if ($vehicleTable !== null) {
         $vehicleOptions = is_array($rows) ? $rows : [];
     } catch (Throwable $exception) {
         $vehicleOptions = [];
+    }
+}
+
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST'
+    && (string) ($_POST['auth_action'] ?? '') === 'create_customer_from_request'
+) {
+    $postedToken = (string) ($_POST['csrf_token'] ?? '');
+    $openCreateCustomerModal = true;
+
+    foreach ($newCustomerFormData as $field => $_unused) {
+        $newCustomerFormData[$field] = trim((string) ($_POST[$field] ?? ''));
+    }
+
+    if (!hash_equals($csrfToken, $postedToken)) {
+        $newCustomerErrors[] = 'Ungültige Anfrage. Bitte Seite neu laden.';
+    }
+
+    if ($newCustomerFormData['email'] !== '' && !filter_var($newCustomerFormData['email'], FILTER_VALIDATE_EMAIL)) {
+        $newCustomerErrors[] = 'Bitte eine gültige E-Mail angeben oder leer lassen.';
+    }
+
+    if (!in_array($newCustomerFormData['customer_typ'], ['Firma', 'Privatperson'], true)) {
+        $newCustomerErrors[] = 'Bitte einen gültigen Kundentyp auswählen.';
+    }
+
+    if ($newCustomerFormData['customer_typ'] === 'Firma' && $newCustomerFormData['company_name'] === '') {
+        $newCustomerErrors[] = 'Bitte einen Firmennamen angeben.';
+    }
+
+    $vehicleBrand = $newCustomerFormData['vehicle_brand'];
+    $vehicleModel = $newCustomerFormData['vehicle_model'];
+    $vehicleType = $newCustomerFormData['vehicle_type'];
+    $vehicleLicensePlate = $newCustomerFormData['vehicle_license_plate'];
+    $vehicleRequested = $vehicleBrand !== '' || $vehicleModel !== '' || $vehicleType !== '' || $vehicleLicensePlate !== '';
+
+    if ($vehicleRequested && ($vehicleBrand === '' || $vehicleModel === '')) {
+        $newCustomerErrors[] = 'Für die Fahrzeugerfassung bitte mindestens Marke und Modell angeben.';
+    }
+
+    if ($vehicleType !== '' && !in_array($vehicleType, $vehicleTypeOptions, true)) {
+        $newCustomerErrors[] = 'Der ausgewählte Fahrzeugtyp ist ungültig.';
+    }
+
+    if ($newCustomerErrors === []) {
+        try {
+            $pdo->beginTransaction();
+
+            $stmt = $pdo->prepare(
+                'INSERT INTO customer (
+                    first_name,
+                    last_name,
+                    email,
+                    phone,
+                    customer_typ,
+                    company_name,
+                    street_address,
+                    postal_code,
+                    city
+                ) VALUES (
+                    :first_name,
+                    :last_name,
+                    :email,
+                    :phone,
+                    :customer_typ,
+                    :company_name,
+                    :street_address,
+                    :postal_code,
+                    :city
+                )'
+            );
+            $stmt->execute([
+                ':first_name' => $newCustomerFormData['first_name'],
+                ':last_name' => $newCustomerFormData['last_name'],
+                ':email' => $newCustomerFormData['email'],
+                ':phone' => $newCustomerFormData['phone'],
+                ':customer_typ' => $newCustomerFormData['customer_typ'],
+                ':company_name' => $newCustomerFormData['company_name'],
+                ':street_address' => $newCustomerFormData['street_address'],
+                ':postal_code' => $newCustomerFormData['postal_code'],
+                ':city' => $newCustomerFormData['city'],
+            ]);
+
+            $createdCustomerId = (int) $pdo->lastInsertId();
+            $createdVehicleId = 0;
+
+            if ($vehicleRequested) {
+                if ($vehicleTable === null) {
+                    throw new RuntimeException('Fahrzeugtabelle wurde nicht gefunden.');
+                }
+
+                $vehicleStmt = $pdo->prepare(
+                    'INSERT INTO ' . $vehicleTable . ' (
+                        customer_id,
+                        brand,
+                        model,
+                        vehicle_type,
+                        license_plate
+                    ) VALUES (
+                        :customer_id,
+                        :brand,
+                        :model,
+                        :vehicle_type,
+                        :license_plate
+                    )'
+                );
+                $vehicleStmt->execute([
+                    ':customer_id' => $createdCustomerId,
+                    ':brand' => $vehicleBrand,
+                    ':model' => $vehicleModel,
+                    ':vehicle_type' => ($vehicleType !== '' ? $vehicleType : null),
+                    ':license_plate' => $vehicleLicensePlate,
+                ]);
+
+                $createdVehicleId = (int) $pdo->lastInsertId();
+            }
+
+            $pdo->commit();
+
+            try {
+                $stmt = $pdo->query('SELECT id, first_name, last_name FROM customer ORDER BY first_name ASC, last_name ASC, id ASC');
+                $rows = $stmt->fetchAll();
+                $customerOptions = is_array($rows) ? $rows : [];
+            } catch (Throwable $exception) {
+                $customerOptions = [];
+            }
+
+            if ($vehicleTable !== null) {
+                try {
+                    $stmt = $pdo->query(
+                        'SELECT cv.id,
+                                cv.customer_id,
+                                cv.brand,
+                                cv.model,
+                                COALESCE(vto.type_name, cv.vehicle_type) AS vehicle_type,
+                                c.first_name,
+                                c.last_name
+                         FROM ' . $vehicleTable . ' cv
+                         LEFT JOIN customer c ON c.id = cv.customer_id
+                         LEFT JOIN vehicle_type_option vto ON vto.type_name = cv.vehicle_type
+                         ORDER BY c.first_name ASC, c.last_name ASC, cv.brand ASC, cv.model ASC, cv.id ASC'
+                    );
+                    $rows = $stmt->fetchAll();
+                    $vehicleOptions = is_array($rows) ? $rows : [];
+                } catch (Throwable $exception) {
+                    $vehicleOptions = [];
+                }
+            }
+
+            $prefillCustomerId = $createdCustomerId;
+            $prefillVehicleId = $createdVehicleId;
+            $detailNotice = 'Kunde wurde erfolgreich angelegt.';
+            $openCreateCustomerModal = false;
+
+            foreach ($newCustomerFormData as $field => $_unused) {
+                $newCustomerFormData[$field] = $field === 'customer_typ' ? 'Privatperson' : '';
+            }
+        } catch (Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            $newCustomerErrors[] = 'Kunde konnte nicht gespeichert werden (E-Mail eventuell bereits vorhanden).';
+        }
     }
 }
 
@@ -406,6 +635,8 @@ if (!$recordDeleted && $requestTable !== null && $requestId > 0) {
 
 $selectedCustomerId = (int) ($requestDetail['customer_id'] ?? 0);
 $selectedVehicleId = (int) ($requestDetail['customer_vehicle_id'] ?? 0);
+$selectedCustomerId = $prefillCustomerId > 0 ? $prefillCustomerId : $selectedCustomerId;
+$selectedVehicleId = $prefillVehicleId > 0 ? $prefillVehicleId : $selectedVehicleId;
 $selectedStatus = (string) ($requestDetail['status'] ?? 'new');
 $selectedCleaningPackage = (string) ($requestDetail['cleaning_package'] ?? '');
 if ($selectedCleaningPackage !== '' && !in_array($selectedCleaningPackage, $cleaningPackageOptions, true)) {
@@ -457,18 +688,21 @@ $isCreateMode = ((int) ($requestDetail['id'] ?? 0)) <= 0;
                 <input type="hidden" name="request_id" value="<?= e((string) ($requestDetail['id'] ?? 0)) ?>">
 
                 <label for="request_customer_id">Kunde</label>
-                <select id="request_customer_id" name="customer_id" required>
-                    <option value="">Bitte auswählen</option>
-                    <?php foreach ($customerOptions as $customer): ?>
-                        <?php
-                        $optionId = (int) ($customer['id'] ?? 0);
-                        $optionName = trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')));
-                        ?>
-                        <option value="<?= e((string) $optionId) ?>"<?= $optionId === $selectedCustomerId ? ' selected' : '' ?>>
-                            <?= e($optionName !== '' ? $optionName : ('Kunde #' . $optionId)) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+                <div class="field-inline-action">
+                    <select id="request_customer_id" name="customer_id" required>
+                        <option value="">Bitte auswählen</option>
+                        <?php foreach ($customerOptions as $customer): ?>
+                            <?php
+                            $optionId = (int) ($customer['id'] ?? 0);
+                            $optionName = trim(((string) ($customer['first_name'] ?? '')) . ' ' . ((string) ($customer['last_name'] ?? '')));
+                            ?>
+                            <option value="<?= e((string) $optionId) ?>"<?= $optionId === $selectedCustomerId ? ' selected' : '' ?>>
+                                <?= e($optionName !== '' ? $optionName : ('Kunde #' . $optionId)) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <button type="button" id="open-create-customer-dialog" class="secondary-button">Neu</button>
+                </div>
 
                 <label for="request_vehicle_id">Fahrzeug</label>
                 <select id="request_vehicle_id" name="customer_vehicle_id" required>
@@ -539,6 +773,78 @@ $isCreateMode = ((int) ($requestDetail['id'] ?? 0)) <= 0;
                     </form>
                 <?php endif; ?>
             </div>
+
+            <dialog id="create-customer-dialog" class="inline-modal">
+                <article class="inline-modal-card" aria-label="Kunde anlegen">
+                    <header class="inline-modal-head">
+                        <h2>Kunde anlegen</h2>
+                        <form method="dialog">
+                            <button type="submit" class="action-icon" aria-label="Dialog schließen" title="Schließen">&#10005;</button>
+                        </form>
+                    </header>
+
+                    <?php foreach ($newCustomerErrors as $newCustomerError): ?>
+                        <p class="form-error"><?= e($newCustomerError) ?></p>
+                    <?php endforeach; ?>
+
+                    <form method="post" action="request_detail.php<?= !$isCreateMode ? '?id=' . e((string) ($requestDetail['id'] ?? 0)) : '' ?>" class="customer-detail-form modal-form" novalidate>
+                        <input type="hidden" name="auth_action" value="create_customer_from_request">
+                        <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+
+                        <label for="new_customer_first_name">Vorname</label>
+                        <input id="new_customer_first_name" type="text" name="first_name" value="<?= e((string) ($newCustomerFormData['first_name'] ?? '')) ?>">
+
+                        <label for="new_customer_last_name">Nachname</label>
+                        <input id="new_customer_last_name" type="text" name="last_name" value="<?= e((string) ($newCustomerFormData['last_name'] ?? '')) ?>">
+
+                        <label for="new_customer_email">E-Mail</label>
+                        <input id="new_customer_email" type="email" name="email" value="<?= e((string) ($newCustomerFormData['email'] ?? '')) ?>">
+
+                        <label for="new_customer_phone">Telefon</label>
+                        <input id="new_customer_phone" type="text" name="phone" value="<?= e((string) ($newCustomerFormData['phone'] ?? '')) ?>">
+
+                        <label for="new_customer_type">Kundentyp</label>
+                        <select id="new_customer_type" name="customer_typ" required>
+                            <option value="Privatperson"<?= (($newCustomerFormData['customer_typ'] ?? 'Privatperson') === 'Privatperson') ? ' selected' : '' ?>>Privatperson</option>
+                            <option value="Firma"<?= (($newCustomerFormData['customer_typ'] ?? '') === 'Firma') ? ' selected' : '' ?>>Firma</option>
+                        </select>
+
+                        <label for="new_customer_company_name">Firma</label>
+                        <input id="new_customer_company_name" type="text" name="company_name" value="<?= e((string) ($newCustomerFormData['company_name'] ?? '')) ?>">
+
+                        <label for="new_customer_street_address">Straße und Hausnummer</label>
+                        <input id="new_customer_street_address" type="text" name="street_address" value="<?= e((string) ($newCustomerFormData['street_address'] ?? '')) ?>">
+
+                        <label for="new_customer_postal_code">PLZ</label>
+                        <input id="new_customer_postal_code" type="text" name="postal_code" value="<?= e((string) ($newCustomerFormData['postal_code'] ?? '')) ?>">
+
+                        <label for="new_customer_city">Ort</label>
+                        <input id="new_customer_city" type="text" name="city" value="<?= e((string) ($newCustomerFormData['city'] ?? '')) ?>">
+
+                        <label for="new_customer_vehicle_brand">Fahrzeug Marke (optional)</label>
+                        <input id="new_customer_vehicle_brand" type="text" name="vehicle_brand" value="<?= e((string) ($newCustomerFormData['vehicle_brand'] ?? '')) ?>" placeholder="z. B. Audi">
+
+                        <label for="new_customer_vehicle_model">Fahrzeug Modell (optional)</label>
+                        <input id="new_customer_vehicle_model" type="text" name="vehicle_model" value="<?= e((string) ($newCustomerFormData['vehicle_model'] ?? '')) ?>" placeholder="z. B. A4">
+
+                        <label for="new_customer_vehicle_type">Fahrzeugtyp (optional)</label>
+                        <select id="new_customer_vehicle_type" name="vehicle_type">
+                            <option value="">Bitte auswählen</option>
+                            <?php foreach ($vehicleTypeOptions as $vehicleTypeOption): ?>
+                                <option value="<?= e($vehicleTypeOption) ?>"<?= (($newCustomerFormData['vehicle_type'] ?? '') === $vehicleTypeOption) ? ' selected' : '' ?>><?= e($vehicleTypeOption) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+
+                        <label for="new_customer_vehicle_license_plate">Kennzeichen (optional)</label>
+                        <input id="new_customer_vehicle_license_plate" type="text" name="vehicle_license_plate" value="<?= e((string) ($newCustomerFormData['vehicle_license_plate'] ?? '')) ?>" placeholder="z. B. HH-AB 1234">
+
+                        <div class="detail-form-actions modal-actions">
+                            <button type="submit" class="primary-button">Kunde anlegen</button>
+                            <button type="button" id="cancel-create-customer-dialog" class="secondary-button">Abbrechen</button>
+                        </div>
+                    </form>
+                </article>
+            </dialog>
         <?php endif; ?>
     </article>
 </main>
@@ -551,10 +857,30 @@ $isCreateMode = ((int) ($requestDetail['id'] ?? 0)) <= 0;
     const vehicleTypeInput = document.getElementById('request_vehicle_type');
     const timeEffortInput = document.getElementById('request_time_effort_calc');
     const netPriceInput = document.getElementById('request_net_price_calc');
+    const openCreateCustomerDialogButton = document.getElementById('open-create-customer-dialog');
+    const createCustomerDialog = document.getElementById('create-customer-dialog');
+    const cancelCreateCustomerDialogButton = document.getElementById('cancel-create-customer-dialog');
     const workloadReferenceMap = <?= json_encode($workloadReferenceMap, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    const openCreateCustomerModalOnLoad = <?= $openCreateCustomerModal ? 'true' : 'false' ?>;
 
     if (!customerSelect || !vehicleSelect || !packageSelect || !vehicleTypeInput || !timeEffortInput || !netPriceInput) {
         return;
+    }
+
+    if (openCreateCustomerDialogButton && createCustomerDialog && typeof createCustomerDialog.showModal === 'function') {
+        openCreateCustomerDialogButton.addEventListener('click', () => {
+            createCustomerDialog.showModal();
+        });
+
+        if (cancelCreateCustomerDialogButton) {
+            cancelCreateCustomerDialogButton.addEventListener('click', () => {
+                createCustomerDialog.close();
+            });
+        }
+
+        if (openCreateCustomerModalOnLoad) {
+            createCustomerDialog.showModal();
+        }
     }
 
     const formatNumber = (value, suffix) => `${Number(value).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${suffix}`;

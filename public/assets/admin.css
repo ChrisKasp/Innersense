@@ -106,6 +106,36 @@ body {
     margin-bottom: 1rem;
 }
 
+.create-header {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 1rem;
+}
+
+.create-header h1 {
+    margin: 0;
+}
+
+.back-icon {
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    color: var(--text);
+    background: #fff;
+    line-height: 1;
+}
+
+.back-icon:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 h1 {
     margin: 0;
     font-size: clamp(1.5rem, 2vw + 1rem, 2.25rem);
@@ -138,12 +168,21 @@ a.button:hover {
 }
 
 input[type="text"],
-input[type="email"] {
+input[type="email"],
+select {
     width: 100%;
     border: 1px solid var(--border);
     border-radius: 0.45rem;
     padding: 0.55rem 0.65rem;
     background: #fff;
+}
+
+input[type="text"]:disabled,
+input[type="email"]:disabled,
+select:disabled {
+    background: #f2f4f7;
+    color: #6b7280;
+    cursor: not-allowed;
 }
 
 .notice,

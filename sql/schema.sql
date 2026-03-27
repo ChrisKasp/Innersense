@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS customer_vehicle (
     model VARCHAR(120) NOT NULL,
     vehicle_type VARCHAR(120) NULL,
     license_plate VARCHAR(30) NOT NULL DEFAULT '',
+    note TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_customer_vehicle_customer_id (customer_id),
@@ -140,6 +141,33 @@ CREATE TABLE IF NOT EXISTS workload_reference (
     CONSTRAINT fk_workload_reference_vehicle_type
         FOREIGN KEY (vehicle_type)
         REFERENCES vehicle_type_option (type_name)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS email_template (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    template_key VARCHAR(120) NULL,
+    template_name VARCHAR(190) NOT NULL,
+    subject_template VARCHAR(255) NOT NULL,
+    body_template TEXT NOT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_email_template_key (template_key),
+    KEY idx_email_template_name (template_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS email_type_template_assignment (
+    email_type_key VARCHAR(120) NOT NULL,
+    template_id INT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (email_type_key),
+    KEY idx_email_type_template_assignment_template_id (template_id),
+    CONSTRAINT fk_email_type_template_assignment_template
+        FOREIGN KEY (template_id)
+        REFERENCES email_template (id)
         ON DELETE RESTRICT
         ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

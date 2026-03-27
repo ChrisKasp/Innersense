@@ -50,25 +50,27 @@ require __DIR__ . '/partials/site_header.php';
             <thead>
                 <tr>
                     <th>Name</th>
+                    <th>Typ</th>
+                    <th>Firmenname</th>
                     <th>E-Mail</th>
                     <th>Telefon</th>
-                    <th>Firma</th>
                     <th>Aktionen</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($customers === []): ?>
                     <tr>
-                        <td colspan="5">Keine Kunden gefunden.</td>
+                        <td colspan="6">Keine Kunden gefunden.</td>
                     </tr>
                 <?php endif; ?>
 
                 <?php foreach ($customers as $customer): ?>
                     <tr>
                         <td><?= e($customer['first_name'] . ' ' . $customer['last_name']) ?></td>
+                        <td><?= e((string) (($customer['customer_typ'] ?? '') !== '' ? $customer['customer_typ'] : '-')) ?></td>
+                        <td><?= e((string) (($customer['company_name'] ?? '') !== '' ? $customer['company_name'] : '-')) ?></td>
                         <td><?= e((string) $customer['email']) ?></td>
                         <td><?= e((string) $customer['phone']) ?></td>
-                        <td><?= e((string) $customer['company']) ?></td>
                         <td class="actions">
                             <a href="customer_edit.php?id=<?= (int) $customer['id'] ?>">Bearbeiten</a>
                             <form method="post" action="customer_delete.php" onsubmit="return confirm('Kunde wirklich löschen?');">
