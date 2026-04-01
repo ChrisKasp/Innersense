@@ -4,7 +4,7 @@ declare(strict_types=1);
 header('Content-Type: text/html; charset=UTF-8');
 
 require_once dirname(__DIR__) . '/config/env.php';
-loadEnv(dirname(__DIR__) . '/.env');
+loadEnv(dirname(__DIR__) . '/config/.env');
 
 $publicContactConfigFile = dirname(__DIR__) . '/config/public_contact.php';
 $publicContactSettings = [];
@@ -22,6 +22,7 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 
 require_once dirname(__DIR__) . '/config/database.php';
 require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
+require_once dirname(__DIR__) . '/src/FormBotProtection.php';
 
 $pdo = db();
 ensureBlockedSlotTable($pdo);
@@ -44,6 +45,9 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'available_slots') {
 $contactStatus = (string) ($_GET['contact'] ?? '');
 $contactMessage = '';
 $contactMessageClass = '';
+$turnstileSiteKey = trim((string) (getenv('TURNSTILE_SITE_KEY') ?: ''));
+$turnstileSecretKey = trim((string) (getenv('TURNSTILE_SECRET_KEY') ?: ''));
+$turnstileEnabled = isTurnstileConfigured($turnstileSiteKey, $turnstileSecretKey);
 
 if ($contactStatus === 'success') {
     $contactMessage = 'Danke. Deine Anfrage wurde erfolgreich versendet.';
@@ -78,6 +82,13 @@ $cleaningPackageOptions = loadCleaningPackageOptions($pdo);
 $preferredTimeOptions = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $botProtectionValid = validateBotProtection($_POST, 'kontakt_form');
+    $turnstileValid = !$turnstileEnabled || validateTurnstileToken(
+        $_POST['cf-turnstile-response'] ?? null,
+        $turnstileSecretKey,
+        getClientIpAddress()
+    );
+
     foreach ($formData as $field => $_unused) {
         $formData[$field] = trim((string) ($_POST[$field] ?? ''));
     }
@@ -107,7 +118,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         && isValidDateOrEmpty($formData['preferred_date'])
         && ($formData['preferred_time'] === '' || isValidHalfHourSlot($formData['preferred_time']))
         && $preferredDateTimeCombinationValid
-        && $consentGiven;
+        && $consentGiven
+        && $botProtectionValid
+        && $turnstileValid;
 
     if ($isValid) {
         try {
@@ -181,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $contactMessageClass = 'form-error';
         }
     } else {
-        $contactMessage = 'Bitte fuelle alle Pflichtfelder korrekt aus, waehle gueltige Optionen und bestaetige die Zustimmung.';
+        $contactMessage = 'Bitte fuelle alle Pflichtfelder korrekt aus, bestaetige die Sicherheitspruefung und versuche es erneut.';
         $contactMessageClass = 'form-error';
     }
 }
@@ -562,6 +575,9 @@ function getAvailableHalfHourSlots(PDO $pdo, string $date): array
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet">
+    <?php if ($turnstileEnabled): ?>
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <?php endif; ?>
 </head>
 <body>
 <?php
@@ -609,6 +625,12 @@ require __DIR__ . '/partials/site_header.php';
             <?php endif; ?>
 
             <form class="contact-form" method="post" action="kontakt.php#formular">
+                <input type="hidden" name="_started_at" value="<?= (string) time() ?>">
+                <p style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+                    <label for="website">Website</label>
+                    <input id="website" type="text" name="website" tabindex="-1" autocomplete="off">
+                </p>
+
                 <div class="field-row">
                     <label>Vorname*
                         <input type="text" name="first_name" value="<?= h($formData['first_name']) ?>" required>
@@ -684,16 +706,21 @@ require __DIR__ . '/partials/site_header.php';
                     <textarea name="special_wishes"><?= h($formData['special_wishes']) ?></textarea>
                 </label>
 
+                <p class="privacy-note"><strong>Datenschutzhinweis</strong></p>
+                <p class="privacy-note">Die von Ihnen im Kontaktformular eingegebenen Daten (Name, E-Mail-Adresse, Telefonnummer, Anfrageinhalte sowie Angaben zu Leistungspaket, Sonderwünschen und Budget) werden ausschließlich zur Bearbeitung Ihrer Anfrage, zur Kontaktaufnahme sowie zur Erstellung eines Angebots verarbeitet.</p>
+                <p class="privacy-note">Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit. b DSGVO (vorvertragliche Maßnahmen) sowie Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einer effizienten Bearbeitung von Anfragen).</p>
+                <p class="privacy-note">Ihre Daten werden per E-Mail an uns übermittelt, eine Bestätigungs-E-Mail wird an Sie versendet und die Daten werden in unserer internen Verwaltungssoftware gespeichert, um Ihre Anfrage weiter zu bearbeiten.</p>
+                <p class="privacy-note">Eine Weitergabe an Dritte erfolgt nicht.</p>
+                <p class="privacy-note">Weitere Informationen zum Datenschutz und zu Ihren Rechten finden Sie in unserer <a href="datenschutz.php">Datenschutzerklärung</a>.</p>
+
                 <label class="consent-row">
                     <input type="checkbox" name="consent" value="1" required <?= isset($_POST['consent']) && $_POST['consent'] === '1' ? 'checked' : '' ?>>
-                    <span>
-                        Durch Klicken des "Abschicken"-Buttons stimme ich zu, dass die im Formular eingegebenen personenbezogenen
-                        Daten zur Bearbeitung der Anfrage und der personalisierten Beratung verarbeitet werden. Meine Einwilligungen
-                        kann ich jederzeit mit Wirkung fuer die Zukunft postalisch oder per E-Mail widerrufen.
-                    </span>
+                    <span>Ich habe die Datenschutzerklärung zur Kenntnis genommen und stimme der Verarbeitung meiner Daten zu.</span>
                 </label>
 
-                <p class="privacy-note">Es gilt unsere <a href="#">Datenschutzerklaerung</a>.</p>
+                <?php if ($turnstileEnabled): ?>
+                    <div class="cf-turnstile" data-sitekey="<?= h($turnstileSiteKey) ?>"></div>
+                <?php endif; ?>
 
                 <button class="submit-btn" type="submit">Absenden</button>
             </form>

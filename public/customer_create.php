@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 
 $pdo = db();
+ensureCustomerEmailAllowsNull($pdo);
 $errors = [];
 $formData = [
     'first_name' => '',
@@ -29,6 +30,10 @@ $vehicleBrandOptions = $vehicleTable !== null ? loadVehicleBrandOptions($pdo, $v
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($formData as $field => $_unused) {
         $formData[$field] = trim((string) ($_POST[$field] ?? ''));
+    }
+
+    if ($formData['first_name'] === '' && $formData['last_name'] === '') {
+        $errors[] = 'Bitte mindestens einen Vor- oder Nachnamen angeben.';
     }
 
     if ($formData['email'] !== '' && !filter_var($formData['email'], FILTER_VALIDATE_EMAIL)) {
@@ -84,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([
                 'first_name' => $formData['first_name'],
                 'last_name' => $formData['last_name'],
-                'email' => $formData['email'],
+                'email' => ($formData['email'] !== '' ? $formData['email'] : null),
                 'phone' => $formData['phone'],
                 'customer_typ' => $formData['customer_typ'],
                 'company_name' => $formData['company_name'],
@@ -165,6 +170,27 @@ function detectVehicleTable(PDO $pdo): ?string
     }
 
     return null;
+}
+
+function ensureCustomerEmailAllowsNull(PDO $pdo): void
+{
+    try {
+        $columnStmt = $pdo->query('SHOW COLUMNS FROM customer LIKE "email"');
+        $column = $columnStmt !== false ? $columnStmt->fetch() : false;
+        if (!is_array($column)) {
+            return;
+        }
+
+        $isNullable = strtolower((string) ($column['Null'] ?? 'NO')) === 'yes';
+        if ($isNullable) {
+            return;
+        }
+
+        $pdo->exec('ALTER TABLE customer MODIFY email VARCHAR(190) NULL');
+        $pdo->exec('UPDATE customer SET email = NULL WHERE TRIM(COALESCE(email, "")) = ""');
+    } catch (Throwable $exception) {
+        // Keep runtime resilient if ALTER permissions are missing.
+    }
 }
 
 /**
@@ -254,60 +280,86 @@ function loadVehicleBrandOptions(PDO $pdo, string $vehicleTable): array
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Kunde anlegen</title>
-    <link rel="stylesheet" href="assets/admin.css">
+    <title>Innersense | Kunde anlegen</title>
+    <link rel="stylesheet" href="assets/verwaltung.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
-<?php
-$activePage = '';
-require __DIR__ . '/partials/site_header.php';
-?>
-
-<main class="container narrow">
-    <section class="create-header">
-        <a class="back-icon" href="verwaltung.php?view=customers" aria-label="Zurück zur Kundenliste">&#8592;</a>
-        <h1>Kunde anlegen</h1>
+<main class="detail-page">
+    <section class="detail-header">
+        <a class="action-icon" href="verwaltung.php?view=customers" aria-label="Zurück zur Kundenliste">&#8592;</a>
+        <div>
+            <h1>Neuer Kunde</h1>
+            <p>Hier kann ein neuer Kunde erfasst werden.</p>
+        </div>
     </section>
 
-    <?php foreach ($errors as $error): ?>
-        <p class="error"><?= e($error) ?></p>
-    <?php endforeach; ?>
+    <article class="customer-detail-card">
+        <?php foreach ($errors as $error): ?>
+            <p class="form-error"><?= e($error) ?></p>
+        <?php endforeach; ?>
 
-    <form method="post" class="form-grid">
-        <label for="customer_typ">Kundentyp *
+        <form id="customer-create-form" method="post" class="customer-detail-form">
+            <label for="customer_typ">Kundentyp *</label>
             <select id="customer_typ" name="customer_typ" required>
                 <option value="Privatperson"<?= $formData['customer_typ'] === 'Privatperson' ? ' selected' : '' ?>>Privatperson</option>
                 <option value="Firma"<?= $formData['customer_typ'] === 'Firma' ? ' selected' : '' ?>>Firma</option>
             </select>
-        </label>
-        <label for="customer_company_name">Firmenname<input id="customer_company_name" type="text" name="company_name" value="<?= e($formData['company_name']) ?>"></label>
-        <label>Vorname<input type="text" name="first_name" value="<?= e($formData['first_name']) ?>"></label>
-        <label>Nachname<input type="text" name="last_name" value="<?= e($formData['last_name']) ?>"></label>
-        <label>E-Mail<input type="email" name="email" value="<?= e($formData['email']) ?>"></label>
-        <label>Telefon<input type="text" name="phone" value="<?= e($formData['phone']) ?>"></label>
-        <label>Straße und Hausnummer<input type="text" name="street_address" value="<?= e($formData['street_address']) ?>"></label>
-        <label>PLZ<input type="text" name="postal_code" value="<?= e($formData['postal_code']) ?>"></label>
-        <label>Ort<input type="text" name="city" value="<?= e($formData['city']) ?>"></label>
-        <label for="vehicle_brand">Fahrzeug Marke (optional)<input id="vehicle_brand" type="text" name="vehicle_brand" list="vehicle_brand_options" value="<?= e($formData['vehicle_brand']) ?>"></label>
-        <datalist id="vehicle_brand_options">
-            <?php foreach ($vehicleBrandOptions as $brandOption): ?>
-                <option value="<?= e($brandOption) ?>"></option>
-            <?php endforeach; ?>
-        </datalist>
-        <label>Fahrzeug Modell (optional)<input type="text" name="vehicle_model" value="<?= e($formData['vehicle_model']) ?>"></label>
-        <label>Fahrzeugtyp (optional)
+
+            <label for="customer_company_name">Firmenname</label>
+            <input id="customer_company_name" type="text" name="company_name" value="<?= e($formData['company_name']) ?>">
+
+            <label for="customer_first_name">Vorname</label>
+            <input id="customer_first_name" type="text" name="first_name" value="<?= e($formData['first_name']) ?>">
+
+            <label for="customer_last_name">Nachname</label>
+            <input id="customer_last_name" type="text" name="last_name" value="<?= e($formData['last_name']) ?>">
+
+            <label for="customer_email">E-Mail</label>
+            <input id="customer_email" type="email" name="email" value="<?= e($formData['email']) ?>">
+
+            <label for="customer_phone">Telefon</label>
+            <input id="customer_phone" type="text" name="phone" value="<?= e($formData['phone']) ?>">
+
+            <label for="customer_street_address">Straße und Hausnummer</label>
+            <input id="customer_street_address" type="text" name="street_address" value="<?= e($formData['street_address']) ?>">
+
+            <label for="customer_postal_code">PLZ</label>
+            <input id="customer_postal_code" type="text" name="postal_code" value="<?= e($formData['postal_code']) ?>">
+
+            <label for="customer_city">Ort</label>
+            <input id="customer_city" type="text" name="city" value="<?= e($formData['city']) ?>">
+
+            <label for="vehicle_brand">Fahrzeug Marke (optional)</label>
+            <input id="vehicle_brand" type="text" name="vehicle_brand" list="vehicle_brand_options" value="<?= e($formData['vehicle_brand']) ?>">
+            <datalist id="vehicle_brand_options">
+                <?php foreach ($vehicleBrandOptions as $brandOption): ?>
+                    <option value="<?= e($brandOption) ?>"></option>
+                <?php endforeach; ?>
+            </datalist>
+
+            <label for="vehicle_model">Fahrzeug Modell (optional)</label>
+            <input id="vehicle_model" type="text" name="vehicle_model" value="<?= e($formData['vehicle_model']) ?>">
+
+            <label for="vehicle_type">Fahrzeugtyp (optional)</label>
             <select id="vehicle_type" name="vehicle_type">
                 <option value="">Bitte auswählen</option>
                 <?php foreach ($vehicleTypeOptions as $vehicleTypeOption): ?>
                     <option value="<?= e($vehicleTypeOption) ?>"<?= $formData['vehicle_type'] === $vehicleTypeOption ? ' selected' : '' ?>><?= e($vehicleTypeOption) ?></option>
                 <?php endforeach; ?>
             </select>
-        </label>
-        <label>Kennzeichen (optional)<input type="text" name="vehicle_license_plate" value="<?= e($formData['vehicle_license_plate']) ?>"></label>
-        <button type="submit">Speichern</button>
-    </form>
+
+            <label for="vehicle_license_plate">Kennzeichen (optional)</label>
+            <input id="vehicle_license_plate" type="text" name="vehicle_license_plate" value="<?= e($formData['vehicle_license_plate']) ?>">
+        </form>
+
+        <div class="detail-form-actions">
+            <button type="submit" form="customer-create-form" class="primary-button">Kunde speichern</button>
+        </div>
+    </article>
 </main>
-<?php require __DIR__ . '/partials/site_footer.php'; ?>
 <script>
 (() => {
     const customerTypeField = document.getElementById('customer_typ');

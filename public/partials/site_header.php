@@ -3,7 +3,7 @@ $activePage = $activePage ?? '';
 $hideVerwaltungInTopnav = $hideVerwaltungInTopnav ?? false;
 
 require_once dirname(__DIR__, 2) . '/config/env.php';
-loadEnv(dirname(__DIR__, 2) . '/.env');
+loadEnv(dirname(__DIR__, 2) . '/config/.env');
 
 $publicContactConfigFile = dirname(__DIR__, 2) . '/config/public_contact.php';
 $publicContactSettings = [];

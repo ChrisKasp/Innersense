@@ -25,7 +25,7 @@ Dieses Projekt kombiniert eine gestylte Marketing-Startseite mit einer einfachen
 
 ## Schnellstart mit Docker
 
-1. `.env.example` nach `.env` kopieren.
+1. `.env.example` nach `config/.env` kopieren.
 2. Container starten:
 
 ```bash
@@ -51,7 +51,7 @@ Voraussetzungen:
 
 Schritte:
 
-1. `.env.example` nach `.env` kopieren und DB-Daten anpassen.
+1. `.env.example` nach `config/.env` kopieren und DB-Daten anpassen.
 2. Datenbank und Tabelle mit `sql/schema.sql` erstellen.
 3. PHP Dev-Server starten:
 

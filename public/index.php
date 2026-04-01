@@ -4,7 +4,7 @@ declare(strict_types=1);
 header('Content-Type: text/html; charset=UTF-8');
 
 require_once dirname(__DIR__) . '/config/env.php';
-loadEnv(dirname(__DIR__) . '/.env');
+loadEnv(dirname(__DIR__) . '/config/.env');
 
 $publicContactConfigFile = dirname(__DIR__) . '/config/public_contact.php';
 $publicContactSettings = [];
@@ -22,6 +22,7 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 
 require_once dirname(__DIR__) . '/config/database.php';
 require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
+require_once dirname(__DIR__) . '/src/FormBotProtection.php';
 
 $pdo = db();
 ensureBlockedSlotTable($pdo);
@@ -48,6 +49,9 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'available_slots') {
 
 $contactStatus = (string) ($_GET['contact'] ?? '');
 $contactMessage = '';
+$turnstileSiteKey = trim((string) (getenv('TURNSTILE_SITE_KEY') ?: ''));
+$turnstileSecretKey = trim((string) (getenv('TURNSTILE_SECRET_KEY') ?: ''));
+$turnstileEnabled = isTurnstileConfigured($turnstileSiteKey, $turnstileSecretKey);
 if ($contactStatus === 'success') {
     $contactMessage = 'Danke. Deine Anfrage wurde erfolgreich versendet.';
 }
@@ -56,6 +60,13 @@ if ($contactStatus === 'error') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') === 'contact_wizard') {
+    $botProtectionValid = validateBotProtection($_POST, 'index_contact_wizard');
+    $turnstileValid = !$turnstileEnabled || validateTurnstileToken(
+        $_POST['cf-turnstile-response'] ?? null,
+        $turnstileSecretKey,
+        getClientIpAddress()
+    );
+
     $to = $contactToEmail;
     $from = getenv('CONTACT_FROM_EMAIL') ?: 'no-reply@innersense.sellerie.net';
 
@@ -69,7 +80,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') 
     $email = trim((string) ($_POST['email'] ?? ''));
     $phone = trim((string) ($_POST['phone'] ?? ''));
     $consent = isset($_POST['consent']) && $_POST['consent'] === '1';
-    $humanCheck = isset($_POST['human_check']) && $_POST['human_check'] === '1';
 
     $preferredTimeOptions = [];
     if ($preferredDate !== '' && isValidDateOrEmpty($preferredDate)) {
@@ -90,7 +100,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') 
         && ($preferredTime === '' || isValidHalfHourSlot($preferredTime))
         && $preferredDateTimeCombinationValid
         && $consent
-        && $humanCheck;
+        && $botProtectionValid
+        && $turnstileValid;
 
     if ($valid) {
         $nameParts = preg_split('/\s+/', $name) ?: [];
@@ -348,6 +359,9 @@ $showcaseItems = array_map(
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;700&display=swap" rel="stylesheet">
+    <?php if ($turnstileEnabled): ?>
+        <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <?php endif; ?>
 </head>
 <body>
 <?php
@@ -370,8 +384,6 @@ require __DIR__ . '/partials/site_header.php';
                 genau da, wo du sie brauchst.
             </p>
         </div>
-
-        <a class="scroll-hint" href="#warum" aria-label="Nach unten scrollen">↓</a>
     </section>
 
     <section class="panel panel-right">
@@ -460,6 +472,11 @@ require __DIR__ . '/partials/site_header.php';
 
         <form class="contact-card" action="index.php#kontakt" method="post" data-wizard>
             <input type="hidden" name="form_id" value="contact_wizard">
+            <input type="hidden" name="_started_at" value="<?= (string) time() ?>">
+            <p style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+                <label for="website">Website</label>
+                <input id="website" type="text" name="website" tabindex="-1" autocomplete="off">
+            </p>
 
             <?php if ($contactMessage !== ''): ?>
                 <p class="contact-alert <?= $contactStatus === 'success' ? 'is-success' : 'is-error' ?>">
@@ -523,9 +540,14 @@ require __DIR__ . '/partials/site_header.php';
             </section>
 
             <section class="wizard-step" data-step>
-                <label class="consent-row"><input type="checkbox" name="consent" value="1" required> Durch Klicken des "Abschicken"-Buttons stimme ich zu, dass die im Formular eingegebenen personenbezogenen Daten zur Bearbeitung der Anfrage und der personalisierten Beratung verarbeitet werden. Meine Einwilligungen kann ich jederzeit mit Wirkung für die Zukunft postalisch oder per E-Mail widerrufen.</label>
-                <p class="consent-text">Es gilt unsere <a href="#">Datenschutzerklärung</a>.</p>
-                <label class="human-row"><input type="checkbox" name="human_check" value="1" required> Ich bin ein Mensch</label>
+                <p class="consent-text"><strong>Datenschutzhinweis</strong></p>
+            <p class="consent-text">Ihre Angaben werden zur Bearbeitung Ihrer Anfrage, zur Kontaktaufnahme sowie zur Angebotserstellung verwendet. Die Daten werden per E-Mail an uns übermittelt. Sie erhalten eine Bestätigungsmail zu Ihrer Anfrage. Nach einer Kontaktaufnahme werden für die weitere Verarbeitung wichtige Daten in unserer internen Verwaltungssoftware gespeichert.</p>
+                <p class="consent-text">Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit. b DSGVO sowie Art. 6 Abs. 1 lit. f DSGVO. Eine Weitergabe an Dritte erfolgt nicht.</p>
+                <p class="consent-text">Weitere Informationen zum Datenschutz und zu Ihren Rechten finden Sie in unserer <a href="datenschutz.php">Datenschutzerklärung</a>.</p>
+                <label class="consent-row"><input type="checkbox" name="consent" value="1" required> Ich habe die Datenschutzerklärung zur Kenntnis genommen und stimme der Verarbeitung meiner Daten zu.</label>
+                <?php if ($turnstileEnabled): ?>
+                    <div class="cf-turnstile" data-sitekey="<?= htmlspecialchars($turnstileSiteKey, ENT_QUOTES, 'UTF-8') ?>"></div>
+                <?php endif; ?>
             </section>
 
             <div class="form-actions" data-wizard-actions>
@@ -539,7 +561,9 @@ require __DIR__ . '/partials/site_header.php';
 
 <?php require __DIR__ . '/partials/site_footer.php'; ?>
 
-<a class="floating-wa" href="<?= htmlspecialchars(($whatsAppHref ?? '#'), ENT_QUOTES, 'UTF-8') ?>" aria-label="WhatsApp Kontakt" target="_blank" rel="noopener noreferrer">w</a>
+<a class="floating-wa" href="<?= htmlspecialchars(($whatsAppHref ?? '#'), ENT_QUOTES, 'UTF-8') ?>" aria-label="WhatsApp Kontakt" target="_blank" rel="noopener noreferrer">
+    <img src="assets/icons/WhatsApp.webp" alt="" loading="lazy" decoding="async">
+</a>
 
 <script>
 (() => {

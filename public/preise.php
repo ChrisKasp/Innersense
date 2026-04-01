@@ -158,6 +158,8 @@ require __DIR__ . '/partials/site_header.php';
 
 <?php require __DIR__ . '/partials/site_footer.php'; ?>
 
-<a class="floating-wa" href="<?= htmlspecialchars(($whatsAppHref ?? '#'), ENT_QUOTES, 'UTF-8') ?>" aria-label="WhatsApp Kontakt" target="_blank" rel="noopener noreferrer">w</a>
+<a class="floating-wa" href="<?= htmlspecialchars(($whatsAppHref ?? '#'), ENT_QUOTES, 'UTF-8') ?>" aria-label="WhatsApp Kontakt" target="_blank" rel="noopener noreferrer">
+    <img src="assets/icons/WhatsApp.webp" alt="" loading="lazy" decoding="async">
+</a>
 </body>
 </html>

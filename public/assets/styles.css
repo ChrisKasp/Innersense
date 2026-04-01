@@ -152,15 +152,6 @@ body {
     font-size: 1.03rem;
 }
 
-.scroll-hint {
-    position: absolute;
-    left: 3.3rem;
-    bottom: 1.5rem;
-    color: #b4c3dd;
-    text-decoration: none;
-    font-size: 1.45rem;
-}
-
 .panel-right {
     background: var(--right-bg);
     display: grid;
@@ -623,6 +614,13 @@ textarea.form-input {
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
 }
 
+.floating-wa img {
+    width: 1.5rem;
+    height: 1.5rem;
+    display: block;
+    object-fit: contain;
+}
+
 @keyframes slide-in-left {
     from {
         opacity: 0;
@@ -669,10 +667,6 @@ textarea.form-input {
 
     .copy-wrap {
         max-width: 100%;
-    }
-
-    .scroll-hint {
-        display: none;
     }
 
     .contact-grid {

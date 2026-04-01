@@ -24,10 +24,12 @@ $lastActivity = (int) ($_SESSION['verwaltung_last_activity'] ?? 0);
 if ($lastActivity > 0 && (time() - $lastActivity) > $idleTimeoutSeconds) {
     $_SESSION['verwaltung_authenticated'] = false;
     unset($_SESSION['verwaltung_last_activity']);
-    header('Location: verwaltung.php');
+    header('Location: verwaltung.php?timed_out=1');
     exit;
 }
 $_SESSION['verwaltung_last_activity'] = time();
+
+ensureCustomerEmailAllowsNull(db());
 
 if ($csrfToken === '') {
     $csrfToken = bin2hex(random_bytes(24));
@@ -75,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? 
             $stmt->execute([
                 ':first_name' => $firstName,
                 ':last_name' => $lastName,
-                ':email' => $email,
+                ':email' => ($email !== '' ? $email : null),
                 ':phone' => $phone,
                 ':customer_typ' => $customerTyp,
                 ':company_name' => $companyName,
@@ -159,6 +161,28 @@ function isReferenceDeleteError(Throwable $exception): bool
     }
 
     return stripos($exception->getMessage(), 'foreign key') !== false;
+}
+
+function ensureCustomerEmailAllowsNull(PDO $pdo): void
+{
+    try {
+        $columnStmt = $pdo->query('SHOW COLUMNS FROM customer LIKE "email"');
+        $column = $columnStmt !== false ? $columnStmt->fetch(PDO::FETCH_ASSOC) : false;
+
+        if (!is_array($column)) {
+            return;
+        }
+
+        $isNullable = strtoupper((string) ($column['Null'] ?? 'NO')) === 'YES';
+        if ($isNullable) {
+            return;
+        }
+
+        $pdo->exec('ALTER TABLE customer MODIFY email VARCHAR(190) NULL');
+        $pdo->exec('UPDATE customer SET email = NULL WHERE TRIM(COALESCE(email, "")) = ""');
+    } catch (Throwable $exception) {
+        // Guardrail only: continue without blocking page usage.
+    }
 }
 ?>
 <!doctype html>

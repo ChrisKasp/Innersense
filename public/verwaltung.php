@@ -7,9 +7,13 @@ header('Content-Type: text/html; charset=UTF-8');
 
 require_once dirname(__DIR__) . '/config/env.php';
 require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
-loadEnv(dirname(__DIR__) . '/.env');
+loadEnv(dirname(__DIR__) . '/config/.env');
 
-$adminPassword = 'innersense4.gerome';
+$adminPassword = trim((string) (getenv('ADMIN_PASSWORD') ?: ''));
+if ($adminPassword === '') {
+    // Keep login unavailable when no admin password is configured in env.
+    $adminPassword = '__ADMIN_PASSWORD_NOT_SET__';
+}
 $authConfigFile = dirname(__DIR__) . '/config/verwaltung_auth.php';
 $publicContactConfigFile = dirname(__DIR__) . '/config/public_contact.php';
 $envFile = detectEnvFilePath(dirname(__DIR__));
@@ -79,8 +83,12 @@ if ($isAuthenticated) {
         $_SESSION['verwaltung_authenticated'] = false;
         unset($_SESSION['verwaltung_last_activity']);
         $isAuthenticated = false;
-        $loginError = 'Sitzung abgelaufen. Bitte Passwort erneut eingeben.';
+        $loginError = 'Seite wurde wegen Nichtbenutzung gesperrt!';
     }
+}
+
+if (!$isAuthenticated && $loginError === '' && (string) ($_GET['timed_out'] ?? '') === '1') {
+    $loginError = 'Seite wurde wegen Nichtbenutzung gesperrt!';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? '') === 'login') {
@@ -170,7 +178,7 @@ if ($isAuthenticated) {
                     'CONTACT_TO_EMAIL' => $contactEmail,
                     'BUSINESS_ADDRESS' => $businessAddress,
                 ])) {
-                    $settingsError = '.env konnte nicht aktualisiert werden. Dateirechte für das Projektverzeichnis prüfen.';
+                    $settingsError = 'config/.env konnte nicht aktualisiert werden. Dateirechte für das Projektverzeichnis prüfen.';
                     $initialView = 'settings_social';
                 } else {
                     // Keep legacy config file in sync when possible, but do not block successful .env updates.
@@ -178,7 +186,7 @@ if ($isAuthenticated) {
                     $socialMediaSettings = $nextSettings;
                     $settingsNotice = $legacyConfigSaved
                         ? 'Social-Media-Einstellungen wurden gespeichert.'
-                        : 'Kontaktdaten wurden in .env gespeichert (config/public_contact.php konnte nicht aktualisiert werden).';
+                        : 'Kontaktdaten wurden in config/.env gespeichert (config/public_contact.php konnte nicht aktualisiert werden).';
                     $initialView = 'settings_social';
                 }
             }
@@ -378,6 +386,26 @@ if ($isAuthenticated) {
             } else {
                 $settingsNotice = 'Zuordnung fuer E-Mail-Typ wurde gespeichert.';
                 $initialView = 'settings_email_templates';
+            }
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['auth_action'] ?? '') === 'complete_request') {
+        $postedToken = (string) ($_POST['csrf_token'] ?? '');
+        if (!hash_equals($csrfToken, $postedToken)) {
+            $settingsError = 'Ungueltige Anfrage. Bitte Seite neu laden.';
+            $initialView = 'requests';
+        } else {
+            $requestId = max(0, (int) ($_POST['request_id'] ?? 0));
+            if ($requestId <= 0) {
+                $settingsError = 'Ungueltige Anfrageauswahl.';
+                $initialView = 'requests';
+            } elseif (!completeRequestById(db(), $requestId)) {
+                $settingsError = 'Anfrage konnte nicht abgeschlossen werden.';
+                $initialView = 'requests';
+            } else {
+                $settingsNotice = 'Anfrage wurde als abgeschlossen markiert.';
+                $initialView = 'requests';
             }
         }
     }
@@ -723,6 +751,7 @@ function saveSocialMediaSettings(string $configFile, array $settings): bool
 function detectEnvFilePath(string $projectRoot): string
 {
     $candidates = [
+        rtrim($projectRoot, '/\\') . '/config/.env',
         rtrim($projectRoot, '/\\') . '/.env',
         rtrim(dirname($projectRoot), '/\\') . '/.env',
     ];
@@ -1238,6 +1267,36 @@ function deleteWorkloadReference(PDO $pdo, int $referenceId): bool
     }
 }
 
+function completeRequestById(PDO $pdo, int $requestId): bool
+{
+    foreach (['customer_requests', 'customer_request'] as $requestTable) {
+        try {
+            $selectStmt = $pdo->prepare('SELECT status FROM ' . $requestTable . ' WHERE id = :id LIMIT 1');
+            $selectStmt->execute([':id' => $requestId]);
+            $row = $selectStmt->fetch();
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $currentStatus = strtolower(trim((string) ($row['status'] ?? '')));
+            if ($currentStatus === 'completed') {
+                return true;
+            }
+
+            $updateStmt = $pdo->prepare('UPDATE ' . $requestTable . ' SET status = :status WHERE id = :id');
+            $updateStmt->execute([
+                ':status' => 'completed',
+                ':id' => $requestId,
+            ]);
+            return true;
+        } catch (Throwable $exception) {
+            continue;
+        }
+    }
+
+    return false;
+}
+
 function normalizeSearchValue(string $value): string
 {
     return mb_strtolower(trim($value), 'UTF-8');
@@ -1260,7 +1319,7 @@ function rowMatchesSearch(array $haystacks, string $query): bool
 /**
  * @param list<array<string, mixed>> $rows
  */
-function renderRequestsTableBody(array $rows, string $loadError, string $query): void
+function renderRequestsTableBody(array $rows, string $loadError, string $query, string $csrfToken): void
 {
     if ($loadError !== '') {
         echo '<tr><td colspan="6">' . e($loadError) . '</td></tr>';
@@ -1329,7 +1388,20 @@ function renderRequestsTableBody(array $rows, string $loadError, string $query):
         echo '<td>' . e((string) (($request['cleaning_package'] ?? '') !== '' ? $request['cleaning_package'] : '-')) . '</td>';
         echo '<td>' . e($preferredDate) . '</td>';
         echo '<td><span class="badge ' . e($statusClass) . '">' . e($statusLabel) . '</span></td>';
-        echo '<td><a class="action-icon" href="request_detail.php?id=' . e((string) ($request['id'] ?? 0)) . '" aria-label="Anfrage im Detail anzeigen" title="Details anzeigen">&#128269;</a></td>';
+        $requestId = (int) ($request['id'] ?? 0);
+        $isClosable = !in_array($status, ['completed', 'cancelled'], true);
+
+        echo '<td><div class="row-actions">';
+        echo '<a class="action-icon" href="request_detail.php?id=' . e((string) $requestId) . '" aria-label="Anfrage im Detail anzeigen" title="Details anzeigen">&#128269;</a>';
+        if ($isClosable && $requestId > 0) {
+            echo '<form method="post" action="verwaltung.php?view=requests" class="action-inline-form" onsubmit="return confirm(\'Anfrage direkt als abgeschlossen markieren?\');">';
+            echo '<input type="hidden" name="auth_action" value="complete_request">';
+            echo '<input type="hidden" name="csrf_token" value="' . e($csrfToken) . '">';
+            echo '<input type="hidden" name="request_id" value="' . e((string) $requestId) . '">';
+            echo '<button class="action-icon action-icon-complete" type="submit" aria-label="Anfrage abschliessen" title="Anfrage abschliessen">&#10003;</button>';
+            echo '</form>';
+        }
+        echo '</div></td>';
         echo '</tr>';
     }
 }
@@ -1593,7 +1665,7 @@ if ($isAuthenticated && $ajaxAction === 'list_search') {
     header('Content-Type: text/html; charset=UTF-8');
 
     if ($panel === 'requests') {
-        renderRequestsTableBody($requestRows, $requestLoadError, $query);
+        renderRequestsTableBody($requestRows, $requestLoadError, $query, $csrfToken);
         exit;
     }
 
@@ -1733,6 +1805,7 @@ endif;
                 <button class="menu-item is-subitem" type="button" data-view="settings_email_templates"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>E-Mail-Vorlagen</span></button>
                 <button class="menu-item is-subitem" type="button" data-view="workload"><span class="menu-icon" aria-hidden="true">&#9679;</span><span>Aufwände</span></button>
             </div>
+            <button class="menu-item" type="button" data-view="logout"><span class="menu-icon" aria-hidden="true">&#10162;</span><span>Abmelden</span></button>
         </nav>
 
         <div class="sidebar-footer">
@@ -1772,9 +1845,8 @@ endif;
                     <small>inkl. Mehrfahrzeug-Kunden</small>
                 </article>
                 <article class="stat-card">
-                    <h2>Hauptseite aufgerufen</h2>
-                    <p class="value"><?= e((string) $dashboardHomepageHits) ?></p>
-                    <small>gesamt seit Aktivierung</small>
+                    <h2>Seiten-Aufrufstatistik</h2>
+                    <p><a class="primary-link" href="/usage/innersense_sellerie_net/usage_202603.html" target="_blank" rel="noopener">Statistik öffnen</a></p>
                 </article>
             </div>
         </section>
@@ -1805,7 +1877,7 @@ endif;
                         <th>Aktionen</th>
                     </tr>
                     </thead>
-                    <tbody id="requests-table-body"><?php renderRequestsTableBody($requestRows, $requestLoadError, ''); ?></tbody>
+                    <tbody id="requests-table-body"><?php renderRequestsTableBody($requestRows, $requestLoadError, '', $csrfToken); ?></tbody>
                 </table>
             </div>
         </section>
@@ -2227,7 +2299,13 @@ endif;
                     </div>
 
                     <div class="table-wrap" style="margin-top:0.9rem;">
-                        <table>
+                        <table class="email-template-table">
+                            <colgroup>
+                                <col style="width:25%">
+                                <col style="width:26%">
+                                <col style="width:40%">
+                                <col style="width:10%">
+                            </colgroup>
                             <thead>
                             <tr>
                                 <th>Name</th>
@@ -2248,23 +2326,46 @@ endif;
                                     $templateName = trim((string) ($emailTemplateRow['template_name'] ?? ''));
                                     $subjectTemplate = (string) ($emailTemplateRow['subject_template'] ?? '');
                                     $bodyTemplate = (string) ($emailTemplateRow['body_template'] ?? '');
+                                    $templateFormId = 'email-template-form-' . $templateId;
                                     ?>
                                     <tr>
-                                        <td colspan="4">
-                                            <form method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form">
+                                        <td>
+                                            <input
+                                                id="template_name_<?= e((string) $templateId) ?>"
+                                                class="table-input"
+                                                type="text"
+                                                name="template_name"
+                                                value="<?= e($templateName) ?>"
+                                                form="<?= e($templateFormId) ?>"
+                                                required
+                                            >
+                                        </td>
+                                        <td>
+                                            <input
+                                                id="subject_template_<?= e((string) $templateId) ?>"
+                                                class="table-input"
+                                                type="text"
+                                                name="subject_template"
+                                                value="<?= e($subjectTemplate) ?>"
+                                                form="<?= e($templateFormId) ?>"
+                                                required
+                                            >
+                                        </td>
+                                        <td>
+                                            <textarea
+                                                id="body_template_<?= e((string) $templateId) ?>"
+                                                class="table-textarea"
+                                                name="body_template"
+                                                rows="6"
+                                                form="<?= e($templateFormId) ?>"
+                                                required
+                                            ><?= e($bodyTemplate) ?></textarea>
+                                        </td>
+                                        <td>
+                                            <form id="<?= e($templateFormId) ?>" method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form settings-form-table-action">
                                                 <input type="hidden" name="auth_action" value="save_email_template">
                                                 <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                                                 <input type="hidden" name="template_id" value="<?= e((string) $templateId) ?>">
-
-                                                <label for="template_name_<?= e((string) $templateId) ?>">Name</label>
-                                                <input id="template_name_<?= e((string) $templateId) ?>" type="text" name="template_name" value="<?= e($templateName) ?>" required>
-
-                                                <label for="subject_template_<?= e((string) $templateId) ?>">Betreff</label>
-                                                <input id="subject_template_<?= e((string) $templateId) ?>" type="text" name="subject_template" value="<?= e($subjectTemplate) ?>" required>
-
-                                                <label for="body_template_<?= e((string) $templateId) ?>">Inhalt</label>
-                                                <textarea id="body_template_<?= e((string) $templateId) ?>" name="body_template" rows="7" required><?= e($bodyTemplate) ?></textarea>
-
                                                 <button type="submit">Vorlage aktualisieren</button>
                                             </form>
                                         </td>
@@ -2276,7 +2377,12 @@ endif;
                     </div>
 
                     <div class="table-wrap" style="margin-top:0.9rem;">
-                        <table>
+                        <table class="email-type-assignment-table">
+                            <colgroup>
+                                <col style="width:35%">
+                                <col style="width:45%">
+                                <col style="width:20%">
+                            </colgroup>
                             <thead>
                             <tr>
                                 <th>E-Mail-Typ</th>
@@ -2286,16 +2392,22 @@ endif;
                             </thead>
                             <tbody>
                             <?php foreach ($emailTypeLabels as $emailTypeKey => $emailTypeLabel): ?>
-                                <?php $selectedTemplateId = max(0, (int) ($emailTypeAssignments[$emailTypeKey] ?? 0)); ?>
+                                <?php
+                                $selectedTemplateId = max(0, (int) ($emailTypeAssignments[$emailTypeKey] ?? 0));
+                                $assignmentFormId = 'assign-email-template-' . md5($emailTypeKey);
+                                ?>
                                 <tr>
-                                    <td><?= e($emailTypeLabel) ?></td>
                                     <td>
-                                        <form method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form settings-form-inline">
+                                        <?= e($emailTypeLabel) ?>
+                                        <small class="muted-inline"><?= e($emailTypeKey) ?></small>
+                                    </td>
+                                    <td>
+                                        <form id="<?= e($assignmentFormId) ?>" method="post" action="verwaltung.php?view=settings_email_templates" class="settings-form settings-form-table-action">
                                             <input type="hidden" name="auth_action" value="assign_email_template">
                                             <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
                                             <input type="hidden" name="email_type_key" value="<?= e($emailTypeKey) ?>">
 
-                                            <select name="template_id" required>
+                                            <select class="table-select" name="template_id" required>
                                                 <option value="">Bitte waehlen</option>
                                                 <?php foreach ($emailTemplateRows as $emailTemplateRow): ?>
                                                     <?php
@@ -2307,11 +2419,11 @@ endif;
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
-
-                                            <button type="submit">Zuordnung speichern</button>
                                         </form>
                                     </td>
-                                    <td><?= e($emailTypeKey) ?></td>
+                                    <td>
+                                        <button type="submit" form="<?= e($assignmentFormId) ?>">Zuordnung speichern</button>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                             </tbody>
@@ -2495,6 +2607,11 @@ endif;
 
             if (item.dataset.view === 'calendar') {
                 window.location.href = 'calendar.php';
+                return;
+            }
+
+            if (item.dataset.view === 'logout') {
+                window.location.href = 'verwaltung.php?logout=1';
                 return;
             }
 

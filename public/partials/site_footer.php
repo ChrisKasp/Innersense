@@ -21,7 +21,7 @@ $instagramHref = $instagramHref ?? '#';
             <a href="impressum.php">Impressum</a>
             <a href="datenschutz.php">Datenschutz</a>
             <a href="#">Cookie-Einstellungen</a>
-            <a href="#">Widerrufsbelehrung</a>
+            <a href="widerrufsbelehrung.php">Widerrufsbelehrung</a>
             <a href="agb.php">AGB</a>
         </nav>
     </div>

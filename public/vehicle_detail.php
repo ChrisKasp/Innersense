@@ -33,7 +33,7 @@ $lastActivity = (int) ($_SESSION['verwaltung_last_activity'] ?? 0);
 if ($lastActivity > 0 && (time() - $lastActivity) > $idleTimeoutSeconds) {
     $_SESSION['verwaltung_authenticated'] = false;
     unset($_SESSION['verwaltung_last_activity']);
-    header('Location: verwaltung.php');
+    header('Location: verwaltung.php?timed_out=1');
     exit;
 }
 $_SESSION['verwaltung_last_activity'] = time();

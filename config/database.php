@@ -15,7 +15,7 @@ function db(): PDO
         return $pdo;
     }
 
-    loadEnv(dirname(__DIR__) . '/.env');
+    loadEnv(dirname(__DIR__) . '/config/.env');
 
     $host = getenv('DB_HOST') ?: '127.0.0.1';
     $port = getenv('DB_PORT') ?: '3306';
