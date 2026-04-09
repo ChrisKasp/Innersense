@@ -1846,7 +1846,7 @@ endif;
                 </article>
                 <article class="stat-card">
                     <h2>Seiten-Aufrufstatistik</h2>
-                    <p><a class="primary-link" href="/usage/innersense_sellerie_net/usage_202603.html" target="_blank" rel="noopener">Statistik öffnen</a></p>
+                    <p><a class="primary-link" href="/usage/index.html" target="_blank" rel="noopener">Statistik öffnen</a></p>
                 </article>
             </div>
         </section>

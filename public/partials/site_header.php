@@ -1,6 +1,5 @@
 <?php
 $activePage = $activePage ?? '';
-$hideVerwaltungInTopnav = $hideVerwaltungInTopnav ?? false;
 
 require_once dirname(__DIR__, 2) . '/config/env.php';
 loadEnv(dirname(__DIR__, 2) . '/config/.env');
@@ -33,9 +32,6 @@ $instagramHref = $instagramUrl !== '' ? $instagramUrl : '#';
         <a class="<?= $activePage === 'home' ? 'active' : '' ?>" href="index.php">Home</a>
         <a class="<?= $activePage === 'kontakt' ? 'active' : '' ?>" href="kontakt.php">Kontakt</a>
         <a class="<?= $activePage === 'preise' ? 'active' : '' ?>" href="preise.php">Preise</a>
-        <?php if (!$hideVerwaltungInTopnav): ?>
-            <a class="<?= $activePage === 'verwaltung' ? 'active' : '' ?>" href="verwaltung.php">Verwaltung</a>
-        <?php endif; ?>
     </nav>
 
     <div class="social-links" aria-label="Social Media">
