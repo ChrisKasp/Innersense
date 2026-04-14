@@ -764,5 +764,13 @@ require __DIR__ . '/partials/site_header.php';
     dateInput.addEventListener('change', updateTimeOptions);
 })();
 </script>
+	
+ <script src="https://consent.umsicht.eu/entry-point.latest.js"></script>
+        <script type="text/javascript">
+            window.consentSlideOut.configure({
+                disclaimerLink: 'datenschutz.php'
+            });
+ </script>
+	
 </body>
 </html>
