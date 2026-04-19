@@ -82,20 +82,6 @@ function isReferenceDeleteError(Throwable $exception): bool
     return stripos($exception->getMessage(), 'foreign key') !== false;
 }
 
-function detectFirstExistingTable(PDO $pdo, array $tableNames): ?string
-{
-    foreach ($tableNames as $tableName) {
-        try {
-            $pdo->query('SELECT id FROM ' . $tableName . ' LIMIT 1');
-            return $tableName;
-        } catch (Throwable $exception) {
-            continue;
-        }
-    }
-
-    return null;
-}
-
 /**
  * @return list<string>
  */
@@ -104,18 +90,6 @@ function loadVehicleTypeOptions(PDO $pdo): array
     $fallback = ['Kleinwagen', 'Limousine', 'SUV', 'Kombi', 'Van'];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS vehicle_type_option (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                type_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_vehicle_type_option_name (type_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
-
         $stmt = $pdo->query(
             'SELECT type_name
              FROM vehicle_type_option
@@ -154,17 +128,6 @@ function loadCleaningPackageOptions(PDO $pdo): array
     ];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS cleaning_package (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                package_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_cleaning_package_name (package_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
 
         $seedStmt = $pdo->prepare(
             'INSERT INTO cleaning_package (package_name, sort_order, is_active)
@@ -243,18 +206,11 @@ function loadWorkloadReferenceMap(PDO $pdo): array
 }
 
 $pdo = db();
-$requestTable = detectFirstExistingTable($pdo, ['customer_requests', 'customer_request']);
-$vehicleTable = detectFirstExistingTable($pdo, ['customer_vehicles', 'customer_vehicle']);
+$requestTable = 'customer_request';
+$vehicleTable = 'customer_vehicle';
 $cleaningPackageOptions = loadCleaningPackageOptions($pdo);
 $workloadReferenceMap = loadWorkloadReferenceMap($pdo);
 $vehicleTypeOptions = loadVehicleTypeOptions($pdo);
-
-if ($requestTable === null) {
-    $detailError = 'Anfragetabelle wurde nicht gefunden.';
-}
-if ($vehicleTable === null && $detailError === '') {
-    $detailError = 'Fahrzeugtabelle wurde nicht gefunden.';
-}
 
 try {
     $stmt = $pdo->query('SELECT id, first_name, last_name FROM customer ORDER BY first_name ASC, last_name ASC, id ASC');

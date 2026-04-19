@@ -23,10 +23,9 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 require_once dirname(__DIR__) . '/config/database.php';
 require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
 require_once dirname(__DIR__) . '/src/FormBotProtection.php';
+require_once dirname(__DIR__) . '/src/ScheduleSlots.php';
 
 $pdo = db();
-ensureBlockedSlotTable($pdo);
-ensurePageHitCounterTable($pdo);
 EmailTemplateService::ensureTables($pdo);
 
 if (!isset($_GET['ajax'])) {
@@ -176,67 +175,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string) ($_POST['form_id'] ?? '') 
     exit;
 }
 
-function isValidDateOrEmpty(string $value): bool
-{
-    if ($value === '') {
-        return true;
-    }
-
-    $date = DateTimeImmutable::createFromFormat('Y-m-d', $value);
-    return $date instanceof DateTimeImmutable && $date->format('Y-m-d') === $value;
-}
-
-/**
- * @return list<string>
- */
-function buildHalfHourSlots(string $start, string $end): array
-{
-    $slots = [];
-    $cursor = DateTimeImmutable::createFromFormat('H:i', $start);
-    $endTime = DateTimeImmutable::createFromFormat('H:i', $end);
-
-    if (!$cursor instanceof DateTimeImmutable || !$endTime instanceof DateTimeImmutable) {
-        return $slots;
-    }
-
-    while ($cursor < $endTime) {
-        $slots[] = $cursor->format('H:i');
-        $cursor = $cursor->modify('+30 minutes');
-    }
-
-    return $slots;
-}
-
-function isValidHalfHourSlot(string $time): bool
-{
-    return in_array($time, buildHalfHourSlots('09:00', '20:00'), true);
-}
-
-function ensureBlockedSlotTable(PDO $pdo): void
-{
-    $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS schedule_blocked_slot (
-            slot_date DATE NOT NULL,
-            slot_time TIME NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (slot_date, slot_time),
-            KEY idx_schedule_blocked_slot_date (slot_date)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-    );
-}
-
-function ensurePageHitCounterTable(PDO $pdo): void
-{
-    $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS site_page_hit (
-            page_key VARCHAR(64) NOT NULL,
-            hit_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            PRIMARY KEY (page_key)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-    );
-}
-
 function incrementPageHitCounter(PDO $pdo, string $pageKey): void
 {
     $stmt = $pdo->prepare(
@@ -245,38 +183,6 @@ function incrementPageHitCounter(PDO $pdo, string $pageKey): void
          ON DUPLICATE KEY UPDATE hit_count = hit_count + 1'
     );
     $stmt->execute([':page_key' => $pageKey]);
-}
-
-/**
- * @return list<string>
- */
-function getAvailableHalfHourSlots(PDO $pdo, string $date): array
-{
-    $allSlots = buildHalfHourSlots('09:00', '20:00');
-
-    if (!isValidDateOrEmpty($date) || $date === '') {
-        return $allSlots;
-    }
-
-    $stmt = $pdo->prepare(
-        'SELECT DATE_FORMAT(slot_time, "%H:%i") AS slot_key
-         FROM schedule_blocked_slot
-         WHERE slot_date = :slot_date'
-    );
-    $stmt->execute([':slot_date' => $date]);
-
-    $blockedMap = [];
-    foreach ($stmt->fetchAll() as $row) {
-        $slot = (string) ($row['slot_key'] ?? '');
-        if ($slot !== '') {
-            $blockedMap[$slot] = true;
-        }
-    }
-
-    return array_values(array_filter(
-        $allSlots,
-        static fn (string $slot): bool => !isset($blockedMap[$slot])
-    ));
 }
 
 $showcaseDirCandidates = [

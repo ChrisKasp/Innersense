@@ -60,21 +60,6 @@ function isReferenceDeleteError(Throwable $exception): bool
     return stripos($exception->getMessage(), 'foreign key') !== false;
 }
 
-function detectVehicleTable(PDO $pdo): ?string
-{
-    $candidates = ['customer_vehicles', 'customer_vehicle'];
-    foreach ($candidates as $tableName) {
-        try {
-            $pdo->query('SELECT id FROM ' . $tableName . ' LIMIT 1');
-            return $tableName;
-        } catch (Throwable $exception) {
-            continue;
-        }
-    }
-
-    return null;
-}
-
 /**
  * @return list<string>
  */
@@ -83,18 +68,6 @@ function loadVehicleTypeOptions(PDO $pdo): array
     $fallback = ['Kleinwagen', 'Limousine', 'SUV', 'Kombi', 'Van'];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS vehicle_type_option (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                type_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_vehicle_type_option_name (type_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
-
         $stmt = $pdo->query(
             'SELECT type_name
              FROM vehicle_type_option
@@ -158,11 +131,7 @@ function loadVehicleBrandOptions(PDO $pdo, string $vehicleTable): array
 }
 
 $pdo = db();
-$vehicleTable = detectVehicleTable($pdo);
-
-if ($vehicleTable === null) {
-    $detailError = 'Fahrzeugtabelle wurde nicht gefunden.';
-}
+$vehicleTable = 'customer_vehicle';
 
 try {
     $stmt = $pdo->query('SELECT id, first_name, last_name FROM customer ORDER BY first_name ASC, last_name ASC, id ASC');

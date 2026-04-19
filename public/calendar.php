@@ -6,6 +6,7 @@ session_start();
 header('Content-Type: text/html; charset=UTF-8');
 
 require_once dirname(__DIR__) . '/config/database.php';
+require_once dirname(__DIR__) . '/src/ScheduleSlots.php';
 
 $idleTimeoutSeconds = 600;
 $csrfToken = (string) ($_SESSION['verwaltung_csrf'] ?? '');
@@ -32,8 +33,7 @@ if ($csrfToken === '') {
 }
 
 $pdo = db();
-ensureBlockedSlotTable($pdo);
-$requestTable = detectFirstExistingTable($pdo, ['customer_requests', 'customer_request']);
+$requestTable = 'customer_request';
 
 $view = (string) ($_GET['view'] ?? 'month');
 if (!in_array($view, ['year', 'month', 'day'], true)) {
@@ -164,56 +164,6 @@ function isHalfHourSlot(string $time): bool
     }
 
     return in_array($minute, [0, 30], true);
-}
-
-/**
- * @return list<string>
- */
-function buildHalfHourSlots(string $start, string $end): array
-{
-    $slots = [];
-    $cursor = DateTimeImmutable::createFromFormat('H:i', $start);
-    $endTime = DateTimeImmutable::createFromFormat('H:i', $end);
-
-    if (!$cursor instanceof DateTimeImmutable || !$endTime instanceof DateTimeImmutable) {
-        return $slots;
-    }
-
-    while ($cursor < $endTime) {
-        $slots[] = $cursor->format('H:i');
-        $cursor = $cursor->modify('+30 minutes');
-    }
-
-    return $slots;
-}
-
-function ensureBlockedSlotTable(PDO $pdo): void
-{
-    $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS schedule_blocked_slot (
-            slot_date DATE NOT NULL,
-            slot_time TIME NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (slot_date, slot_time),
-            KEY idx_schedule_blocked_slot_date (slot_date)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-    );
-}
-
-/**
- * @param list<string> $tableCandidates
- */
-function detectFirstExistingTable(PDO $pdo, array $tableCandidates): ?string
-{
-    foreach ($tableCandidates as $table) {
-        $stmt = $pdo->prepare('SHOW TABLES LIKE :table_name');
-        $stmt->execute([':table_name' => $table]);
-        if ($stmt->fetch() !== false) {
-            return $table;
-        }
-    }
-
-    return null;
 }
 
 /**

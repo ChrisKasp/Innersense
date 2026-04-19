@@ -23,9 +23,9 @@ if ($contactToEmail === '' || filter_var($contactToEmail, FILTER_VALIDATE_EMAIL)
 require_once dirname(__DIR__) . '/config/database.php';
 require_once dirname(__DIR__) . '/src/EmailTemplateService.php';
 require_once dirname(__DIR__) . '/src/FormBotProtection.php';
+require_once dirname(__DIR__) . '/src/ScheduleSlots.php';
 
 $pdo = db();
-ensureBlockedSlotTable($pdo);
 EmailTemplateService::ensureTables($pdo);
 
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'available_slots') {
@@ -361,16 +361,6 @@ function upsertCustomer(PDO $pdo, array $formData): int
     return (int) $pdo->lastInsertId();
 }
 
-function isValidDateOrEmpty(string $value): bool
-{
-    if ($value === '') {
-        return true;
-    }
-
-    $date = DateTimeImmutable::createFromFormat('Y-m-d', $value);
-    return $date instanceof DateTimeImmutable && $date->format('Y-m-d') === $value;
-}
-
 function customerHasStreetAddressColumn(PDO $pdo): bool
 {
     static $hasStreetAddress = null;
@@ -393,18 +383,6 @@ function loadVehicleTypeOptions(PDO $pdo): array
     $fallback = ['Kleinwagen', 'Limousine', 'SUV', 'Kombi', 'Van'];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS vehicle_type_option (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                type_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_vehicle_type_option_name (type_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
-
         $stmt = $pdo->query(
             'SELECT type_name
              FROM vehicle_type_option
@@ -443,17 +421,6 @@ function loadCleaningPackageOptions(PDO $pdo): array
     ];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS cleaning_package (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                package_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_cleaning_package_name (package_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
 
         $seedStmt = $pdo->prepare(
             'INSERT INTO cleaning_package (package_name, sort_order, is_active)
@@ -491,77 +458,6 @@ function loadCleaningPackageOptions(PDO $pdo): array
     } catch (Throwable $exception) {
         return $defaults;
     }
-}
-
-/**
- * @return list<string>
- */
-function buildHalfHourSlots(string $start, string $end): array
-{
-    $slots = [];
-    $cursor = DateTimeImmutable::createFromFormat('H:i', $start);
-    $endTime = DateTimeImmutable::createFromFormat('H:i', $end);
-
-    if (!$cursor instanceof DateTimeImmutable || !$endTime instanceof DateTimeImmutable) {
-        return $slots;
-    }
-
-    while ($cursor < $endTime) {
-        $slots[] = $cursor->format('H:i');
-        $cursor = $cursor->modify('+30 minutes');
-    }
-
-    return $slots;
-}
-
-function isValidHalfHourSlot(string $time): bool
-{
-    return in_array($time, buildHalfHourSlots('09:00', '20:00'), true);
-}
-
-function ensureBlockedSlotTable(PDO $pdo): void
-{
-    $pdo->exec(
-        'CREATE TABLE IF NOT EXISTS schedule_blocked_slot (
-            slot_date DATE NOT NULL,
-            slot_time TIME NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (slot_date, slot_time),
-            KEY idx_schedule_blocked_slot_date (slot_date)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-    );
-}
-
-/**
- * @return list<string>
- */
-function getAvailableHalfHourSlots(PDO $pdo, string $date): array
-{
-    $allSlots = buildHalfHourSlots('09:00', '20:00');
-
-    if (!isValidDateOrEmpty($date) || $date === '') {
-        return $allSlots;
-    }
-
-    $stmt = $pdo->prepare(
-        'SELECT DATE_FORMAT(slot_time, "%H:%i") AS slot_key
-         FROM schedule_blocked_slot
-         WHERE slot_date = :slot_date'
-    );
-    $stmt->execute([':slot_date' => $date]);
-
-    $blockedMap = [];
-    foreach ($stmt->fetchAll() as $row) {
-        $slot = (string) ($row['slot_key'] ?? '');
-        if ($slot !== '') {
-            $blockedMap[$slot] = true;
-        }
-    }
-
-    return array_values(array_filter(
-        $allSlots,
-        static fn (string $slot): bool => !isset($blockedMap[$slot])
-    ));
 }
 
 ?>

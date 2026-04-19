@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/bootstrap.php';
+require_once dirname(__DIR__) . '/config/database.php';
+require_once dirname(__DIR__) . '/src/helpers.php';
 
 $pdo = db();
-ensureCustomerEmailAllowsNull($pdo);
 $errors = [];
 $formData = [
     'first_name' => '',
@@ -24,7 +24,7 @@ $formData = [
 ];
 
 $vehicleTypeOptions = loadVehicleTypeOptions($pdo);
-$vehicleTable = detectVehicleTable($pdo);
+$vehicleTable = 'customer_vehicle';
 $vehicleBrandOptions = $vehicleTable !== null ? loadVehicleBrandOptions($pdo, $vehicleTable) : [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -101,11 +101,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $customerId = (int) $pdo->lastInsertId();
 
             if ($vehicleRequested) {
-                $vehicleTable = detectVehicleTable($pdo);
-                if ($vehicleTable === null) {
-                    throw new RuntimeException('Fahrzeugtabelle wurde nicht gefunden.');
-                }
-
                 $vehicleStmt = $pdo->prepare(
                     'INSERT INTO ' . $vehicleTable . ' (
                         customer_id,
@@ -157,42 +152,6 @@ if ($selectedVehicleBrand !== '') {
     }
 }
 
-function detectVehicleTable(PDO $pdo): ?string
-{
-    $candidates = ['customer_vehicles', 'customer_vehicle'];
-    foreach ($candidates as $tableName) {
-        try {
-            $pdo->query('SELECT id FROM ' . $tableName . ' LIMIT 1');
-            return $tableName;
-        } catch (Throwable $exception) {
-            continue;
-        }
-    }
-
-    return null;
-}
-
-function ensureCustomerEmailAllowsNull(PDO $pdo): void
-{
-    try {
-        $columnStmt = $pdo->query('SHOW COLUMNS FROM customer LIKE "email"');
-        $column = $columnStmt !== false ? $columnStmt->fetch() : false;
-        if (!is_array($column)) {
-            return;
-        }
-
-        $isNullable = strtolower((string) ($column['Null'] ?? 'NO')) === 'yes';
-        if ($isNullable) {
-            return;
-        }
-
-        $pdo->exec('ALTER TABLE customer MODIFY email VARCHAR(190) NULL');
-        $pdo->exec('UPDATE customer SET email = NULL WHERE TRIM(COALESCE(email, "")) = ""');
-    } catch (Throwable $exception) {
-        // Keep runtime resilient if ALTER permissions are missing.
-    }
-}
-
 /**
  * @return list<string>
  */
@@ -201,18 +160,6 @@ function loadVehicleTypeOptions(PDO $pdo): array
     $fallback = ['Kleinwagen', 'Limousine', 'SUV', 'Kombi', 'Van'];
 
     try {
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS vehicle_type_option (
-                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-                type_name VARCHAR(120) NOT NULL,
-                sort_order INT NOT NULL DEFAULT 0,
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_vehicle_type_option_name (type_name)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
-        );
-
         $stmt = $pdo->query(
             'SELECT type_name
              FROM vehicle_type_option
